@@ -1,7 +1,7 @@
 {
   "name": "xlayout",
-  "type": "module",
-  "version": "0.0.0",
+  "private": true,
+  "namespace": "@xlayout",
   "packageManager": "pnpm@8.6.2",
   "description": "",
   "author": "Kirk Lin <https://github.com/kirklin>",
@@ -14,39 +14,15 @@
   },
   "bugs": "https://github.com/kirklin/xlayout/issues",
   "keywords": [],
-  "sideEffects": false,
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "require": "./dist/index.cjs",
-      "import": "./dist/index.mjs"
-    }
-  },
-  "main": "./dist/index.mjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.ts",
-  "typesVersions": {
-    "*": {
-      "*": [
-        "./dist/*",
-        "./dist/index.d.ts"
-      ]
-    }
-  },
-  "files": [
-    "dist"
-  ],
   "scripts": {
-    "build": "unbuild",
-    "dev": "unbuild --stub",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "prepublishOnly": "nr build",
-    "release": "bumpp",
-    "start": "esno src/index.ts",
-    "test": "vitest",
-    "typecheck": "tsc --noEmit",
-    "up": "taze major -r -w -I"
+    "test": "pnpm -r run test",
+    "build": "pnpm -r run build",
+    "prepare": "pnpm -r run stub",
+    "release": "bumpp -r && pnpm -r publish --access public",
+    "typecheck": "pnpm -r run typecheck",
+    "up": "taze major -r -w"
   },
   "devDependencies": {
     "@antfu/ni": "^0.21.4",

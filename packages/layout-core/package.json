@@ -1,0 +1,47 @@
+{
+  "name": "@xlayout/layout-core",
+  "type": "module",
+  "version": "0.0.0",
+  "packageManager": "pnpm@8.6.2",
+  "description": "Headless UI for building powerful layout for TS/JS.",
+  "author": "Kirk Lin <https://github.com/kirklin>",
+  "license": "MIT",
+  "funding": "https://www.buymeacoffee.com/linkirk",
+  "homepage": "https://github.com/kirklin/xlayout#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kirklin/xlayout.git"
+  },
+  "bugs": "https://github.com/kirklin/xlayout/issues",
+  "keywords": [],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.mjs"
+    }
+  },
+  "main": "./dist/index.mjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "*": [
+        "./dist/*",
+        "./dist/index.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rimraf dist && unbuild",
+    "dev": "unbuild --stub",
+    "prepublishOnly": "pnpm run build",
+    "start": "esno src/index.ts",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit"
+  }
+}
