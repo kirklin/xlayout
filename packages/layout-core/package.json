@@ -43,5 +43,8 @@
     "start": "esno src/index.ts",
     "test": "vitest",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "resize-observer-polyfill": "^1.5.1"
   }
 }
