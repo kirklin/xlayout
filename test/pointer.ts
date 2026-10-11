@@ -33,6 +33,25 @@ export async function drag(element: Element, deltaX: number, deltaY: number, opt
   await commands.pointer(actions);
 }
 
+export interface TouchDragOptions {
+  /** Milliseconds the finger rests where it went down before it moves. */
+  hold?: number;
+  /** Number of intermediate touch moves. */
+  steps?: number;
+  /** Keep the finger down at the end; `false` lifts it. */
+  release?: boolean;
+}
+
+/** Puts a finger down at the client point `from` and moves it by `deltaX` and `deltaY` pixels. */
+export async function touchDrag(from: { x: number; y: number }, deltaX: number, deltaY: number, options: TouchDragOptions = {}): Promise<void> {
+  await commands.touch([
+    { type: "start", x: from.x, y: from.y },
+    ...(options.hold ? [{ type: "wait" as const, ms: options.hold }] : []),
+    { type: "move", x: from.x + deltaX, y: from.y + deltaY, steps: options.steps ?? 8 },
+    ...(options.release ?? true ? [{ type: "end" as const }] : []),
+  ]);
+}
+
 export async function movePointer(x: number, y: number, steps = 8): Promise<void> {
   await commands.pointer([{ type: "move", x, y, steps }]);
 }

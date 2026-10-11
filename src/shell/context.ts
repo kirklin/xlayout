@@ -8,7 +8,12 @@ import { ROOT_NAME, SIDEBAR_NAME } from "./constants";
 /** Marks the overlay of a sidebar, so an open drawer leaves it interactive. */
 export const OVERLAY_ATTRIBUTE = "data-xlayout-shell-overlay";
 
+/** Starts a touch swipe of a drawer from a pointer that went down on `target`. */
+export type SwipeStarter = (event: PointerEvent, target: HTMLElement) => void;
+
 export interface ShellContextValue {
+  /** The root element, once mounted. */
+  element: HTMLElement | null;
   isMobile: boolean;
   hydrated: boolean;
   direction: Direction;
@@ -26,6 +31,9 @@ export interface ShellContextValue {
   setResizingId: (id: string | null) => void;
   registerLandmark: (element: HTMLElement) => () => void;
   setRegionHeight: (region: "header" | "footer", height: number | null) => void;
+  /** Lets an overlay swipe its drawer. */
+  registerSwipe: (sidebarId: string, start: SwipeStarter) => () => void;
+  startSwipe: (sidebarId: string, event: PointerEvent, target: HTMLElement) => void;
 }
 
 export const [ShellContext, useShellContext] = createRequiredContext<ShellContextValue>(ROOT_NAME);

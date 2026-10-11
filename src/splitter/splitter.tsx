@@ -21,12 +21,13 @@ import { useDirection } from "@radix-ui/react-direction";
 import * as React from "react";
 import { useComposedRefs } from "../shared/compose-refs";
 import { getOwnerWindow, reorderByDocumentPosition, sortByDocumentPosition } from "../shared/dom";
-import { isPrimaryPointerDown, startDragSession } from "../shared/drag";
+import { holdTouchScrolling, isPrimaryPointerDown, startDragSession } from "../shared/drag";
 import { composeEventHandlers } from "../shared/events";
 import { renderSynchronously } from "../shared/flush";
 import { fuzzyCompare, fuzzyEqual } from "../shared/math";
 import { Primitive } from "../shared/primitive";
 import { measureElementSize, observeElementSize } from "../shared/resize-observer";
+import { DEFAULT_TOUCH_MARGIN, registerTouchReach } from "../shared/touch-reach";
 import { useControllableState } from "../shared/use-controllable-state";
 import { useStableCallback } from "../shared/use-stable-callback";
 import {
@@ -885,6 +886,8 @@ export interface SplitterHandleProps extends PrimitiveProps<"div"> {
   /** Prevents resizing with this handle; the panels beside it still follow other handles. */
   disabled?: boolean;
   onDraggingChange?: (dragging: boolean) => void;
+  /** How far beyond the handle, in pixels, a touch still takes it; `0` takes only touches on it. @default 12 */
+  touchMargin?: number;
 }
 
 function SplitterHandle(props: SplitterHandleProps): React.ReactNode {
@@ -892,6 +895,7 @@ function SplitterHandle(props: SplitterHandleProps): React.ReactNode {
     id: idProp,
     disabled: disabledProp = false,
     onDraggingChange,
+    touchMargin = DEFAULT_TOUCH_MARGIN,
     onPointerDown,
     onKeyDown,
     onDoubleClick,
@@ -955,6 +959,60 @@ function SplitterHandle(props: SplitterHandleProps): React.ReactNode {
     ? undefined
     : separatorOrientation === "vertical" ? `translateX(${previewOffset}px)` : `translateY(${previewOffset}px)`;
 
+  const beginPointerResize = useStableCallback((event: PointerEvent, handleElement: HTMLElement) => {
+    if (!registeredHandle) {
+      return;
+    }
+    handleElement.focus({ preventScroll: true });
+    const origin = { x: event.clientX, y: event.clientY };
+    const participants = [registeredHandle, ...findIntersectingHandles(registeredHandle, origin)];
+    const sessions = participants.map(participant => participant.beginResize(origin));
+    const crossing = participants.length > 1;
+    const dragSession = startDragSession(event, {
+      threshold: 0,
+      cursor: crossing ? "move" : getResizeCursor(separatorOrientation, direction, { atStart: false, atEnd: false }),
+      captureElement: handleElement,
+    }, {
+      onMove: (moveEvent) => {
+        const point = { x: moveEvent.clientX, y: moveEvent.clientY };
+        let limits: ResizeLimit[] = [];
+        renderSynchronously(() => {
+          limits = sessions.map(session => session.move(point));
+        });
+        if (!crossing) {
+          dragSession.setCursor(getResizeCursor(separatorOrientation, direction, limits[0]!));
+          return;
+        }
+        const columnIndex = participants.findIndex(participant => participant.orientation === "vertical");
+        const rowIndex = participants.findIndex(participant => participant.orientation === "horizontal");
+        dragSession.setCursor(getCrossingCursor(limits[columnIndex]!, limits[rowIndex]!, direction));
+      },
+      onEnd: () => {
+        renderSynchronously(() => sessions.forEach(session => session.commit()));
+      },
+      onCancel: () => {
+        renderSynchronously(() => sessions.forEach(session => session.cancel()));
+      },
+      // When the browser takes the pointer away, what the user did so far is kept.
+      onInterrupt: () => {
+        renderSynchronously(() => sessions.forEach(session => session.commit()));
+      },
+    });
+  });
+
+  React.useLayoutEffect(() => {
+    const root = element?.parentElement;
+    if (!element || !root || disabled || touchMargin <= 0) {
+      return;
+    }
+    const stopReach = registerTouchReach({ element, margin: touchMargin, press: event => beginPointerResize(event, element) });
+    const release = holdTouchScrolling(root);
+    return () => {
+      stopReach();
+      release();
+    };
+  }, [element, disabled, touchMargin, beginPointerResize]);
+
   return (
     <Primitive.div
       role="separator"
@@ -985,41 +1043,7 @@ function SplitterHandle(props: SplitterHandleProps): React.ReactNode {
           return;
         }
         event.preventDefault();
-        event.currentTarget.focus({ preventScroll: true });
-        const origin = { x: event.clientX, y: event.clientY };
-        const participants = [registeredHandle, ...findIntersectingHandles(registeredHandle, origin)];
-        const sessions = participants.map(participant => participant.beginResize(origin));
-        const crossing = participants.length > 1;
-        const dragSession = startDragSession(event.nativeEvent, {
-          threshold: 0,
-          cursor: crossing ? "move" : getResizeCursor(separatorOrientation, direction, { atStart: false, atEnd: false }),
-          captureElement: event.currentTarget,
-        }, {
-          onMove: (moveEvent) => {
-            const point = { x: moveEvent.clientX, y: moveEvent.clientY };
-            let limits: ResizeLimit[] = [];
-            renderSynchronously(() => {
-              limits = sessions.map(session => session.move(point));
-            });
-            if (!crossing) {
-              dragSession.setCursor(getResizeCursor(separatorOrientation, direction, limits[0]!));
-              return;
-            }
-            const columnIndex = participants.findIndex(participant => participant.orientation === "vertical");
-            const rowIndex = participants.findIndex(participant => participant.orientation === "horizontal");
-            dragSession.setCursor(getCrossingCursor(limits[columnIndex]!, limits[rowIndex]!, direction));
-          },
-          onEnd: () => {
-            renderSynchronously(() => sessions.forEach(session => session.commit()));
-          },
-          onCancel: () => {
-            renderSynchronously(() => sessions.forEach(session => session.cancel()));
-          },
-          // When the browser takes the pointer away, what the user did so far is kept.
-          onInterrupt: () => {
-            renderSynchronously(() => sessions.forEach(session => session.commit()));
-          },
-        });
+        beginPointerResize(event.nativeEvent, event.currentTarget);
       })}
       onKeyDown={composeEventHandlers(onKeyDown, (event) => {
         if (!disabled && resizeWithKeyboard(id, event)) {

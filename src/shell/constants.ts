@@ -18,4 +18,11 @@ export const DEFAULT_COLLAPSED_WIDTH = "3rem";
 export const KEYBOARD_STEP = 10;
 export const KEYBOARD_LARGE_STEP = 50;
 
+/** Pixels a touch travels across the screen before it swipes a drawer. */
+export const SWIPE_THRESHOLD = 10;
+/** A swipe released faster than this, in pixels per millisecond, carries on in its direction. */
+export const SWIPE_FLING_VELOCITY = 0.4;
+/** How far back, in milliseconds, the speed of a swipe is measured when it is released. */
+export const SWIPE_VELOCITY_WINDOW = 100;
+
 export const STORAGE_VERSION = 1;

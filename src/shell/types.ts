@@ -46,6 +46,11 @@ export interface SidebarApi {
   /** Width the sidebar occupies beside the content right now, as a CSS length. */
   offset: string;
   resizing: boolean;
+  /**
+   * How far a touch has swiped the drawer from where it rests open, as a share of its width:
+   * `0` open, `1` closed. `null` while no touch swipes it.
+   */
+  swipe: number | null;
   shortcut: string | undefined;
   setOpen: (open: boolean) => void;
   setOpenMobile: (open: boolean) => void;

@@ -2,7 +2,7 @@
 
 import type { PrimitiveProps } from "../shared/primitive";
 import type { Direction } from "../shared/types";
-import type { ShellContextValue, SidebarContextValue, SidebarLimits } from "./context";
+import type { ShellContextValue, SidebarContextValue, SidebarLimits, SwipeStarter } from "./context";
 import type { LengthContext } from "./length";
 import type {
   PersistedSidebar,
@@ -20,12 +20,13 @@ import * as React from "react";
 import { useComposedRefs } from "../shared/compose-refs";
 import { useServerMarkup } from "../shared/csp";
 import { getOwnerWindow, isEditableTarget, sortByDocumentPosition } from "../shared/dom";
-import { isPrimaryPointerDown, startDragSession } from "../shared/drag";
+import { holdTouchScrolling, isPrimaryPointerDown, startDragSession } from "../shared/drag";
 import { composeEventHandlers } from "../shared/events";
 import { renderSynchronously } from "../shared/flush";
-import { fuzzyCompare, fuzzyEqual } from "../shared/math";
+import { clamp, fuzzyCompare, fuzzyEqual } from "../shared/math";
 import { Primitive } from "../shared/primitive";
 import { measureElementSize, observeElementSize } from "../shared/resize-observer";
+import { DEFAULT_TOUCH_MARGIN, registerTouchReach } from "../shared/touch-reach";
 import { useControllableState } from "../shared/use-controllable-state";
 import { useMediaQuery } from "../shared/use-media-query";
 import { useStableCallback } from "../shared/use-stable-callback";
@@ -44,6 +45,9 @@ import {
   ROOT_NAME,
   SIDEBAR_NAME,
   SKIP_LINK_NAME,
+  SWIPE_FLING_VELOCITY,
+  SWIPE_THRESHOLD,
+  SWIPE_VELOCITY_WINDOW,
   TRIGGER_NAME,
 } from "./constants";
 import { OVERLAY_ATTRIBUTE, ShellContext, SidebarContext, useShellContext, useSidebarContext } from "./context";
@@ -51,6 +55,14 @@ import { readLengthContext, toCssLength, toPixels } from "./length";
 import { getTabbableElements, lockScroll, makeOthersInert } from "./modal";
 import { formatAriaShortcut, isApplePlatform, matchesShortcut, parseShortcut } from "./shortcut";
 import { parseShellState, serializeShellState } from "./storage";
+
+/** Where a touch has the drawer while it swipes it. */
+interface Swipe {
+  /** Distance in pixels from where the drawer rests open, along the horizontal axis. */
+  offset: number;
+  /** The share of its width the drawer is away from open. */
+  progress: number;
+}
 
 const storageListeners = new Set<() => void>();
 
@@ -111,6 +123,8 @@ function Shell(props: ShellProps): React.ReactNode {
   const direction = useDirection(dir);
   const isMobile = useMediaQuery(breakpoint, false);
   const hydrated = !useServerMarkup();
+  const [element, setElement] = React.useState<HTMLDivElement | null>(null);
+  const composedRef = useComposedRefs(ref, setElement);
   const mainId = React.useId();
   const mainRef = React.useRef<HTMLElement | null>(null);
   const [sidebars, setSidebars] = React.useState<ReadonlyMap<string, SidebarApi>>(() => new Map());
@@ -182,6 +196,19 @@ function Shell(props: ShellProps): React.ReactNode {
 
   const setRegionHeight = React.useCallback((region: "header" | "footer", height: number | null) => {
     setRegionHeights(current => (current[region] === height ? current : { ...current, [region]: height }));
+  }, []);
+
+  const swipeStartersRef = React.useRef(new Map<string, SwipeStarter>());
+  const registerSwipe = React.useCallback((sidebarId: string, start: SwipeStarter) => {
+    swipeStartersRef.current.set(sidebarId, start);
+    return () => {
+      if (swipeStartersRef.current.get(sidebarId) === start) {
+        swipeStartersRef.current.delete(sidebarId);
+      }
+    };
+  }, []);
+  const startSwipe = React.useCallback((sidebarId: string, event: PointerEvent, target: HTMLElement) => {
+    swipeStartersRef.current.get(sidebarId)?.(event, target);
   }, []);
 
   // F6 moves between landmarks and returns to the element last focused in each one.
@@ -258,6 +285,7 @@ function Shell(props: ShellProps): React.ReactNode {
   }
 
   const contextValue = React.useMemo((): ShellContextValue => ({
+    element,
     isMobile,
     hydrated,
     direction,
@@ -273,7 +301,9 @@ function Shell(props: ShellProps): React.ReactNode {
     setResizingId,
     registerLandmark,
     setRegionHeight,
-  }), [isMobile, hydrated, direction, mainId, persisted, sidebars, resizingId, publishSidebar, persist, rememberOpener, takeOpener, registerLandmark, setRegionHeight]);
+    registerSwipe,
+    startSwipe,
+  }), [element, isMobile, hydrated, direction, mainId, persisted, sidebars, resizingId, publishSidebar, persist, rememberOpener, takeOpener, registerLandmark, setRegionHeight, registerSwipe, startSwipe]);
 
   return (
     <ShellContext value={contextValue}>
@@ -283,7 +313,7 @@ function Shell(props: ShellProps): React.ReactNode {
         data-hydrated={hydrated ? "" : undefined}
         data-resizing={resizingId === null ? undefined : ""}
         {...rootProps}
-        ref={ref}
+        ref={composedRef}
         style={{ ...cssVariables, ...style }}
       />
     </ShellContext>
@@ -407,6 +437,19 @@ export interface ShellSidebarProps extends PrimitiveProps<"div"> {
   "shortcut"?: string;
   /** Closes the drawer when a link inside it is clicked. @default true */
   "closeOnNavigate"?: boolean;
+  /**
+   * Lets a touch swipe the open drawer, or its overlay, toward its edge to close it. While it
+   * swipes, the drawer and the overlay are marked `data-swiping`, and
+   * `--xlayout-shell-sidebar-swipe` holds how far the drawer is from where it rests open.
+   * @default true
+   */
+  "swipeToClose"?: boolean;
+  /**
+   * Width in pixels of the strip along the screen's edge from which a touch swipes the closed
+   * drawer open; `0` turns it off. The system's back gesture may claim that edge first.
+   * @default 0
+   */
+  "swipeEdge"?: number;
   /** Names the drawer while it is open as a modal dialog. */
   "aria-label"?: string;
   /** Names the drawer while it is open as a modal dialog. */
@@ -433,10 +476,13 @@ function ShellSidebar(props: ShellSidebarProps): React.ReactNode {
     collapseThreshold,
     shortcut,
     closeOnNavigate = true,
+    swipeToClose = true,
+    swipeEdge = 0,
     "aria-label": ariaLabel,
     "aria-labelledby": ariaLabelledby,
     onKeyDown,
     onClick,
+    onPointerDown,
     ref,
     style,
     ...sidebarProps
@@ -495,6 +541,7 @@ function ShellSidebar(props: ShellSidebarProps): React.ReactNode {
     offset = expanded ? widthCss : collapsedCss;
   }
   const resizing = root.resizingId === id;
+  const [swipe, setSwipe] = React.useState<Swipe | null>(null);
 
   const { persist } = root;
   const persistDocked = React.useCallback((nextOpen: boolean, nextWidth: number | undefined) => {
@@ -588,6 +635,49 @@ function ShellSidebar(props: ShellSidebarProps): React.ReactNode {
     }
   }, [setOpenState, setWidthState, persistDocked, width]);
 
+  // Moving toward the drawer's edge of the screen closes it: left for a drawer on the left.
+  const closingSign = (side === "start") === (root.direction === "ltr") ? -1 : 1;
+
+  /** Follows a touch that swipes the drawer, from open or, for `opening`, from closed. */
+  const beginSwipe = useStableCallback((event: PointerEvent, target: HTMLElement, opening: boolean) => {
+    if (!element) {
+      return;
+    }
+    const width = measureElementSize(element).width;
+    if (width <= 0) {
+      return;
+    }
+    const closed = closingSign * width;
+    const start = opening ? closed : 0;
+    let latest = start;
+    let samples: { x: number; time: number }[] = [{ x: event.clientX, time: event.timeStamp }];
+    startDragSession(event, {
+      threshold: SWIPE_THRESHOLD,
+      cursor: "grabbing",
+      captureElement: target,
+      // A swipe goes across the screen toward where the drawer moves; anything else scrolls.
+      shouldStart: delta => Math.abs(delta.x) > Math.abs(delta.y) && Math.sign(delta.x) === (opening ? -closingSign : closingSign),
+    }, {
+      onMove: (moveEvent) => {
+        latest = clamp(start + moveEvent.clientX - event.clientX, Math.min(0, closed), Math.max(0, closed));
+        samples = [...samples.filter(sample => moveEvent.timeStamp - sample.time <= SWIPE_VELOCITY_WINDOW), { x: moveEvent.clientX, time: moveEvent.timeStamp }];
+        renderSynchronously(() => setSwipe({ offset: latest, progress: Math.abs(latest) / width }));
+      },
+      onEnd: () => {
+        const first = samples[0]!;
+        const last = samples.at(-1)!;
+        const towardClosed = ((last.x - first.x) / Math.max(1, last.time - first.time)) * closingSign;
+        const progress = Math.abs(latest) / width;
+        const close = towardClosed > SWIPE_FLING_VELOCITY || (towardClosed >= -SWIPE_FLING_VELOCITY && progress > 0.5);
+        renderSynchronously(() => {
+          setSwipe(null);
+          setOpenMobile(!close);
+        });
+      },
+      onCancel: () => renderSynchronously(() => setSwipe(null)),
+    });
+  });
+
   const api = React.useMemo((): SidebarApi => ({
     id,
     side,
@@ -599,16 +689,57 @@ function ShellSidebar(props: ShellSidebarProps): React.ReactNode {
     width: widthCss,
     offset,
     resizing,
+    swipe: swipe?.progress ?? null,
     shortcut,
     setOpen,
     setOpenMobile,
     toggle,
     setWidth,
     resetWidth,
-  }), [id, side, mode, state, collapsible, open, openMobile, widthCss, offset, resizing, shortcut, setOpen, setOpenMobile, toggle, setWidth, resetWidth]);
+  }), [id, side, mode, state, collapsible, open, openMobile, widthCss, offset, resizing, swipe, shortcut, setOpen, setOpenMobile, toggle, setWidth, resetWidth]);
 
   const { publishSidebar } = root;
   React.useLayoutEffect(() => (element ? publishSidebar(api, element) : undefined), [element, api, publishSidebar]);
+
+  const swipeOpen = mode === "modal" && openMobile && swipeToClose;
+  const { registerSwipe } = root;
+  React.useEffect(() => {
+    if (!swipeOpen || !element) {
+      return;
+    }
+    const stopOverlay = registerSwipe(id, (event, target) => beginSwipe(event, target, false));
+    // Swipes that start on scrolling content of the drawer keep it from scrolling along.
+    const release = holdTouchScrolling(element);
+    return () => {
+      stopOverlay();
+      release();
+    };
+  }, [swipeOpen, element, registerSwipe, id, beginSwipe]);
+
+  const edgeSwipe = mode === "modal" && !openMobile && swipeEdge > 0;
+  const shellElement = root.element;
+  React.useEffect(() => {
+    if (!edgeSwipe || !element || !shellElement) {
+      return;
+    }
+    const ownerDocument = element.ownerDocument;
+    const ownerWindow = getOwnerWindow(element);
+    const handlePointerDown = (event: PointerEvent): void => {
+      if (event.pointerType !== "touch" || !event.isPrimary) {
+        return;
+      }
+      const fromEdge = closingSign < 0 ? event.clientX : ownerWindow.innerWidth - event.clientX;
+      if (fromEdge <= swipeEdge) {
+        beginSwipe(event, ownerDocument.documentElement, true);
+      }
+    };
+    ownerDocument.addEventListener("pointerdown", handlePointerDown, true);
+    const release = holdTouchScrolling(shellElement);
+    return () => {
+      ownerDocument.removeEventListener("pointerdown", handlePointerDown, true);
+      release();
+    };
+  }, [edgeSwipe, element, shellElement, closingSign, swipeEdge, beginSwipe]);
 
   // Crossing the breakpoint closes the drawer, so it does not reappear later by surprise.
   React.useEffect(() => {
@@ -678,6 +809,7 @@ function ShellSidebar(props: ShellSidebarProps): React.ReactNode {
         data-mode={mode}
         data-collapsible={collapsible}
         data-resizing={resizing ? "" : undefined}
+        data-swiping={swipe ? "" : undefined}
         role={modalOpen ? "dialog" : undefined}
         aria-modal={modalOpen || undefined}
         aria-label={modalOpen ? ariaLabel : undefined}
@@ -690,8 +822,18 @@ function ShellSidebar(props: ShellSidebarProps): React.ReactNode {
           "--xlayout-shell-sidebar-width": widthCss,
           "--xlayout-shell-sidebar-collapsed-width": collapsedCss,
           "--xlayout-shell-sidebar-offset": offset,
+          ...(swipe
+            ? { "--xlayout-shell-sidebar-swipe": `${swipe.offset}px`, "--xlayout-shell-sidebar-swipe-progress": swipe.progress }
+            : null),
+          // Touches that go across the open drawer swipe it; up and down they scroll it.
+          ...(swipeOpen ? { touchAction: "pan-y pinch-zoom" } : null),
           ...style,
         }}
+        onPointerDown={composeEventHandlers(onPointerDown, (event) => {
+          if (swipeOpen && event.pointerType === "touch" && event.isPrimary) {
+            beginSwipe(event.nativeEvent, event.currentTarget, false);
+          }
+        })}
         onKeyDown={composeEventHandlers(onKeyDown, (event) => {
           if (!modalOpen || !element) {
             return;
@@ -768,19 +910,32 @@ export interface ShellSidebarOverlayProps extends PrimitiveProps<"div"> {
 
 /** The backdrop behind an open drawer; clicking it closes the drawer. */
 function ShellSidebarOverlay(props: ShellSidebarOverlayProps): React.ReactNode {
-  const { sidebar: sidebarId = "start", forceMount = false, onClick, ...overlayProps } = props;
+  const { sidebar: sidebarId = "start", forceMount = false, onClick, onPointerDown, style, ...overlayProps } = props;
   const root = useShellContext(OVERLAY_NAME);
   const sidebar = root.sidebars.get(sidebarId);
   const open = sidebar !== undefined && sidebar.mode === "modal" && sidebar.openMobile;
-  if (!open && !forceMount) {
+  const swipe = sidebar?.swipe ?? null;
+  if (!open && !forceMount && swipe === null) {
     return null;
   }
   return (
     <Primitive.div
       aria-hidden
       data-state={open ? "open" : "closed"}
+      data-swiping={swipe === null ? undefined : ""}
       {...{ [OVERLAY_ATTRIBUTE]: sidebarId }}
       {...overlayProps}
+      style={{
+        ...(swipe === null ? null : { "--xlayout-shell-sidebar-swipe-progress": swipe }),
+        // A touch on the overlay swipes the drawer it belongs to.
+        ...(open ? { touchAction: "none" } : null),
+        ...style,
+      }}
+      onPointerDown={composeEventHandlers(onPointerDown, (event) => {
+        if (open && event.pointerType === "touch" && event.isPrimary) {
+          root.startSwipe(sidebarId, event.nativeEvent, event.currentTarget);
+        }
+      })}
       onClick={composeEventHandlers(onClick, () => {
         sidebar?.setOpenMobile(false);
       })}
@@ -791,14 +946,28 @@ function ShellSidebarOverlay(props: ShellSidebarOverlayProps): React.ReactNode {
 export interface ShellSidebarResizerProps extends PrimitiveProps<"div"> {
   /** Toggles the sidebar when the resizer is clicked without dragging. */
   toggleOnClick?: boolean;
+  /** How far beyond the resizer, in pixels, a touch still takes it; `0` takes only touches on it. @default 12 */
+  touchMargin?: number;
 }
 
 /** The edge of a sidebar that resizes it; place it inside `Shell.Sidebar`. */
 function ShellSidebarResizer(props: ShellSidebarResizerProps): React.ReactNode {
-  const { toggleOnClick = false, onPointerDown, onKeyDown, onDoubleClick, onClick, style, ...resizerProps } = props;
+  const {
+    toggleOnClick = false,
+    touchMargin = DEFAULT_TOUCH_MARGIN,
+    onPointerDown,
+    onKeyDown,
+    onDoubleClick,
+    onClick,
+    ref,
+    style,
+    ...resizerProps
+  } = props;
   const root = useShellContext(RESIZER_NAME);
   const sidebar = useSidebarContext(RESIZER_NAME);
   const { api, limits, widthPixels, applyWidth } = sidebar;
+  const [element, setElement] = React.useState<HTMLDivElement | null>(null);
+  const composedRef = useComposedRefs(ref, setElement);
   const draggedRef = React.useRef(false);
   const growSign = (api.side === "start") === (root.direction === "ltr") ? 1 : -1;
   const expanded = api.state === "expanded";
@@ -823,6 +992,64 @@ function ShellSidebarResizer(props: ShellSidebarResizerProps): React.ReactNode {
     return { open: !collapses, width: clamped };
   };
 
+  const beginResize = useStableCallback((event: PointerEvent, handle: HTMLElement) => {
+    if (!limits || currentSize === null) {
+      return;
+    }
+    handle.focus({ preventScroll: true });
+    draggedRef.current = false;
+    const startSize = currentSize;
+    const startOpen = api.open;
+    const startWidth = widthPixels ?? startSize;
+    const originX = event.clientX;
+    let latest: { open: boolean; width: number } | null = null;
+    const finish = (): void => {
+      renderSynchronously(() => {
+        root.setResizingId(null);
+        if (latest) {
+          applyWidth(latest.open, latest.width, true);
+        }
+      });
+    };
+    startDragSession(event, {
+      threshold: toggleOnClick ? 3 : 0,
+      cursor: "col-resize",
+      captureElement: handle,
+    }, {
+      onStart: () => {
+        draggedRef.current = true;
+        root.setResizingId(api.id);
+      },
+      onMove: (moveEvent) => {
+        renderSynchronously(() => {
+          latest = resizeTo(startSize + (moveEvent.clientX - originX) * growSign, startSize, false);
+        });
+      },
+      onEnd: finish,
+      onCancel: () => {
+        renderSynchronously(() => {
+          root.setResizingId(null);
+          applyWidth(startOpen, startWidth, false);
+        });
+      },
+      // When the browser takes the pointer away, what the user did so far is kept.
+      onInterrupt: finish,
+    });
+  });
+
+  const shellElement = root.element;
+  React.useLayoutEffect(() => {
+    if (!element || !shellElement || hidden || touchMargin <= 0) {
+      return;
+    }
+    const stopReach = registerTouchReach({ element, margin: touchMargin, press: event => beginResize(event, element) });
+    const release = holdTouchScrolling(shellElement);
+    return () => {
+      stopReach();
+      release();
+    };
+  }, [element, shellElement, hidden, touchMargin, beginResize]);
+
   return (
     <Primitive.div
       role="separator"
@@ -836,51 +1063,14 @@ function ShellSidebarResizer(props: ShellSidebarResizerProps): React.ReactNode {
       hidden={hidden}
       data-state={api.resizing ? "dragging" : "idle"}
       {...resizerProps}
+      ref={composedRef}
       style={{ touchAction: "none", userSelect: "none", ...style }}
       onPointerDown={composeEventHandlers(onPointerDown, (event) => {
         if (!limits || currentSize === null || !isPrimaryPointerDown(event)) {
           return;
         }
         event.preventDefault();
-        event.currentTarget.focus({ preventScroll: true });
-        draggedRef.current = false;
-        const startSize = currentSize;
-        const startOpen = api.open;
-        const startWidth = widthPixels ?? startSize;
-        const originX = event.clientX;
-        let latest: { open: boolean; width: number } | null = null;
-        const finish = (): void => {
-          renderSynchronously(() => {
-            root.setResizingId(null);
-            if (latest) {
-              applyWidth(latest.open, latest.width, true);
-            }
-          });
-        };
-        startDragSession(event.nativeEvent, {
-          threshold: toggleOnClick ? 3 : 0,
-          cursor: "col-resize",
-          captureElement: event.currentTarget,
-        }, {
-          onStart: () => {
-            draggedRef.current = true;
-            root.setResizingId(api.id);
-          },
-          onMove: (moveEvent) => {
-            renderSynchronously(() => {
-              latest = resizeTo(startSize + (moveEvent.clientX - originX) * growSign, startSize, false);
-            });
-          },
-          onEnd: finish,
-          onCancel: () => {
-            renderSynchronously(() => {
-              root.setResizingId(null);
-              applyWidth(startOpen, startWidth, false);
-            });
-          },
-          // When the browser takes the pointer away, what the user did so far is kept.
-          onInterrupt: finish,
-        });
+        beginResize(event.nativeEvent, event.currentTarget);
       })}
       onClick={composeEventHandlers(onClick, () => {
         if (draggedRef.current) {

@@ -1,6 +1,34 @@
 // @env node
-import type { BrowserCommand } from "vitest/node";
-import type { PointerAction } from "./types.ts";
+import type { CDPSession, Frame, Page } from "playwright";
+import type { BrowserCommand, BrowserCommandContext } from "vitest/node";
+import type { PointerAction, TouchAction } from "./types.ts";
+
+/** One DevTools session per page, so a touch can go on over several commands. */
+const touchSessions = new WeakMap<Page, Promise<CDPSession>>();
+/** Where the finger of the touch going on in each page is, in page coordinates. */
+const lastTouch = new WeakMap<Page, [number, number]>();
+
+function touchSessionOf(page: Page): Promise<CDPSession> {
+  let session = touchSessions.get(page);
+  if (!session) {
+    session = page.context().newCDPSession(page);
+    touchSessions.set(page, session);
+  }
+  return session;
+}
+
+/** Converts client coordinates of the test page to coordinates of the browser page that holds it. */
+async function pageCoordinates(context: BrowserCommandContext): Promise<(x: number, y: number) => [number, number]> {
+  const frame: Frame = await context.frame();
+  const frameElement = await frame.frameElement();
+  const box = await frameElement.boundingBox();
+  if (!box) {
+    throw new Error("The test iframe is not visible.");
+  }
+  const innerWidth = await frame.evaluate(() => window.innerWidth);
+  const scale = box.width / innerWidth;
+  return (x, y) => [box.x + x * scale, box.y + y * scale];
+}
 
 /**
  * Replays pointer actions with the real mouse of the browser, so pointer capture, cursor
@@ -11,15 +39,7 @@ export const pointer: BrowserCommand<[actions: PointerAction[]]> = async (contex
   if (context.provider.name !== "playwright") {
     throw new Error(`The pointer command needs the playwright provider, not ${context.provider.name}.`);
   }
-  const frame = await context.frame();
-  const frameElement = await frame.frameElement();
-  const box = await frameElement.boundingBox();
-  if (!box) {
-    throw new Error("The test iframe is not visible.");
-  }
-  const innerWidth = await frame.evaluate(() => window.innerWidth);
-  const scale = box.width / innerWidth;
-  const toPage = (x: number, y: number): [number, number] => [box.x + x * scale, box.y + y * scale];
+  const toPage = await pageCoordinates(context);
   const { mouse } = context.page;
 
   for (const action of actions) {
@@ -44,4 +64,66 @@ export const pointer: BrowserCommand<[actions: PointerAction[]]> = async (contex
   }
 };
 
-export const commands = { pointer };
+/**
+ * Replays a one finger touch as the touch screen of the browser would send it, so touch-action,
+ * scrolling and the pointer events of touches behave as they do for users. Only Chromium takes
+ * touches from outside, through the DevTools protocol. Coordinates are client coordinates of
+ * the test page.
+ */
+export const touch: BrowserCommand<[actions: TouchAction[]]> = async (context, actions) => {
+  if (context.provider.name !== "playwright") {
+    throw new Error(`The touch command needs the playwright provider, not ${context.provider.name}.`);
+  }
+  const { page } = context;
+  const browserName = page.context().browser()?.browserType().name();
+  if (browserName !== "chromium") {
+    throw new Error(`Touches are replayed through the Chrome DevTools protocol, which ${browserName} does not have.`);
+  }
+  const toPage = await pageCoordinates(context);
+  const session = await touchSessionOf(page);
+  const send = async (type: "touchStart" | "touchMove" | "touchEnd", point: [number, number] | null): Promise<void> => {
+    await session.send("Input.dispatchTouchEvent", {
+      type,
+      // A small contact area keeps the browser's touch adjustment from moving the touch onto a
+      // nearby target, so tests see where the library takes a touch.
+      touchPoints: point ? [{ x: point[0], y: point[1], id: 1, radiusX: 1, radiusY: 1, force: 1 }] : [],
+    });
+  };
+  for (const action of actions) {
+    switch (action.type) {
+      case "start": {
+        lastTouch.set(page, toPage(action.x, action.y));
+        await send("touchStart", lastTouch.get(page)!);
+        break;
+      }
+      case "move": {
+        const target = toPage(action.x, action.y);
+        const steps = action.steps ?? 1;
+        const from = lastTouch.get(page);
+        if (!from) {
+          throw new Error("A touch moves only after it started.");
+        }
+        for (let step = 1; step <= steps; step++) {
+          const point: [number, number] = [from[0] + ((target[0] - from[0]) * step) / steps, from[1] + ((target[1] - from[1]) * step) / steps];
+          lastTouch.set(page, point);
+          await send("touchMove", point);
+        }
+        break;
+      }
+      case "end": {
+        lastTouch.delete(page);
+        await send("touchEnd", null);
+        break;
+      }
+      case "wait": {
+        await page.waitForTimeout(action.ms);
+        break;
+      }
+      default: {
+        action satisfies never;
+      }
+    }
+  }
+};
+
+export const commands = { pointer, touch };
