@@ -15,7 +15,7 @@ function node(args: string[], input?: string): string {
   return result.stdout;
 }
 
-function render(source: "page" | "payload", payload?: string, nonce?: string): Rendered {
+function render(source: "page" | "payload" | "virtual", payload?: string, nonce?: string): Rendered {
   return JSON.parse(node(["html.ts", source, ...(nonce === undefined ? [] : [nonce])], payload)) as Rendered;
 }
 
@@ -56,6 +56,13 @@ describe("the built package on the server", () => {
       "dist/sticky/sticky.js",
     ]);
     expect(fromPayload.html).toBe(render("page").html);
+  });
+
+  it("renders the first items of a virtual masonry in a plain grid", () => {
+    const { html } = render("virtual");
+    expect(html).toMatch(/^<div data-layout="virtual" style="display:grid;grid-template-columns:repeat\(3, minmax\(0, 1fr\)\);overflow-anchor:none">/);
+    expect(html.match(/data-index="\d+"/g)).toEqual(["0", "1", "2", "3", "4", "5"].map(index => `data-index="${index}"`));
+    expect(html).toContain("<div data-index=\"5\" style=\"grid-column:span 1;height:105px\">Card 5</div>");
   });
 
   it("renders markup without style attributes for a content security policy with a nonce", () => {

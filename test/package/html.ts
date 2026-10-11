@@ -5,7 +5,7 @@ import { text } from "node:stream/consumers";
 import { createElement, use } from "react";
 import { prerenderToNodeStream } from "react-dom/static";
 import { createFromNodeStream } from "react-server-dom-webpack/client";
-import { Page } from "./page.ts";
+import { Page, VirtualMasonryExample } from "./page.ts";
 
 /** What this script prints: the markup and the client modules a payload made it load. */
 export interface Rendered {
@@ -28,8 +28,8 @@ Object.assign(globalThis, {
 });
 
 /**
- * The page rendered directly, with the nonce given as the second argument if any, or turned
- * into elements from the Server Components payload on stdin.
+ * The page rendered directly, with the nonce given as the second argument if any, turned into
+ * elements from the Server Components payload on stdin, or the virtual masonry example.
  */
 function content(source: string | undefined): React.ReactNode {
   if (source === "page") {
@@ -40,7 +40,10 @@ function content(source: string | undefined): React.ReactNode {
     const FromPayload = (): React.ReactNode => use(payload);
     return createElement(FromPayload);
   }
-  throw new Error(`Render "page" or "payload", not "${source}".`);
+  if (source === "virtual") {
+    return createElement(VirtualMasonryExample);
+  }
+  throw new Error(`Render "page", "payload" or "virtual", not "${source}".`);
 }
 
 /** Prints the HTML of the page rendered from the source named by the first argument. */

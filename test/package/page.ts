@@ -49,6 +49,20 @@ function MasonryExample(): React.ReactNode {
   return h(Masonry.Root, { columns: 3 }, CARDS.map(card => h(Masonry.Item, { key: card.id, style: { height: card.height } }, card.id)));
 }
 
+/**
+ * A virtual masonry renders its items from a function, which only a client component can pass;
+ * on the server it renders its first items.
+ */
+export function VirtualMasonryExample(): React.ReactNode {
+  return h(Masonry.Root, {
+    count: 1000,
+    columns: 3,
+    initialCount: 6,
+    getItemKey: (index: number) => `card-${index}`,
+    children: (index: number) => h(Masonry.Item, { style: { height: 100 + index } }, `Card ${index}`),
+  });
+}
+
 function OverflowExample(): React.ReactNode {
   return h(
     Overflow.Root,

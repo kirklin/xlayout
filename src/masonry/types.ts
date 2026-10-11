@@ -54,3 +54,6 @@ export interface MasonryLayoutInfo {
   /** Whether the browser lays the items out with `display: grid-lanes`. */
   native: boolean;
 }
+
+/** How high an item not measured yet is taken to be: pixels, or a function of its index and the column width. */
+export type MasonryHeightEstimate = number | ((index: number, columnWidth: number) => number);

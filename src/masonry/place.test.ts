@@ -1,6 +1,6 @@
-import type { MasonryItemInput } from "./types";
+import type { MasonryItemInput, MasonryLayout, MasonryLayoutInput } from "./types";
 import { describe, expect, it } from "vitest";
-import { computeMasonryLayout, countColumns } from "./place";
+import { computeMasonryLayout, countColumns, placeItems } from "./place";
 
 function items(...heights: number[]): MasonryItemInput[] {
   return heights.map(height => ({ span: 1, height }));
@@ -71,6 +71,55 @@ describe("computeMasonryLayout", () => {
   it("rejects columns and spans that are not whole numbers of at least 1", () => {
     expect(() => computeMasonryLayout({ columns: 0, gap: 0, tolerance: 0, items: [] })).toThrow("at least 1, not 0");
     expect(() => computeMasonryLayout({ columns: 2, gap: 0, tolerance: 0, items: [{ span: 1.5, height: 1 }] })).toThrow("not 1.5");
+  });
+
+  it("places as the rule reads, written out plainly, for random items", () => {
+    // The rule as written in the specification, without regard for speed.
+    const reference = ({ columns, gap, tolerance, items: input }: MasonryLayoutInput): MasonryLayout => {
+      const running = Array.from<number>({ length: columns }).fill(0);
+      let cursor = 0;
+      const placements = input.map((item) => {
+        const span = Math.min(item.span, columns);
+        const reach = (line: number): number => Math.max(...running.slice(line, line + span));
+        const lines = Array.from({ length: columns - span + 1 }, (_, index) => index);
+        const lowest = Math.min(...lines.map(reach));
+        const tied = lines.filter(line => reach(line) <= lowest + tolerance);
+        const line = item.column === undefined ? tied.find(candidate => candidate >= cursor) ?? tied[0]! : Math.min(item.column, columns - span);
+        cursor = line + span;
+        const y = reach(line);
+        for (let column = line; column < line + span; column++) {
+          running[column] = y + Math.max(0, item.height) + gap;
+        }
+        return { column: line, span, y };
+      });
+      return { placements, height: input.length > 0 ? Math.max(...running) - gap : 0 };
+    };
+    let seed = 7;
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    for (let round = 0; round < 300; round++) {
+      const columns = 1 + Math.floor(random() * 6);
+      const input: MasonryLayoutInput = {
+        columns,
+        gap: Math.floor(random() * 3) * 8,
+        tolerance: [0, 16, Infinity][Math.floor(random() * 3)]!,
+        items: Array.from({ length: Math.floor(random() * 40) }, () => ({
+          span: 1 + Math.floor(random() * 3),
+          height: Math.floor(random() * 300) - 20,
+          ...(random() < 0.2 ? { column: Math.floor(random() * columns) } : null),
+        })),
+      };
+      expect(computeMasonryLayout(input)).toEqual(reference(input));
+    }
+  });
+
+  it("places a hundred thousand items quickly", () => {
+    const start = performance.now();
+    const placed = placeItems({ columns: 5, gap: 12, tolerance: 16, count: 100_000, spanOf: index => (index % 17 === 0 ? 2 : 1), heightOf: index => 120 + (index * 37) % 200, columnOf: () => undefined });
+    expect(placed.tops).toHaveLength(100_000);
+    expect(performance.now() - start).toBeLessThan(200);
   });
 });
 
