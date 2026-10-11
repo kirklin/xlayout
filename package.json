@@ -97,6 +97,7 @@
     "publint": "catalog:cli",
     "react": "catalog:frontend",
     "react-dom": "catalog:frontend",
+    "react-server-dom-webpack": "catalog:testing",
     "simple-git-hooks": "catalog:cli",
     "taze": "catalog:cli",
     "tsdown": "catalog:cli",

@@ -16,6 +16,14 @@ export default defineConfig({
         },
       },
       {
+        test: {
+          name: "package",
+          environment: "node",
+          include: ["test/package/*.test.ts"],
+          globalSetup: ["./test/package/build.ts"],
+        },
+      },
+      {
         // Optimizing a dependency first imported during a run reloads the page and fails the file.
         optimizeDeps: { include: ["react-dom/server"] },
         test: {
