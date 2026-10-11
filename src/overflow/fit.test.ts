@@ -79,6 +79,71 @@ describe("fitItems", () => {
   });
 });
 
+/** The fit as the rules read: everything shown is added up again after every item that hides. */
+function referenceFit(fit: FitInput): string[] {
+  const visible = new Set(fit.items.map(entry => entry.value));
+  const used = (withIndicator: boolean): number => {
+    const shown = fit.items.filter(entry => visible.has(entry.value));
+    const dividers = fit.dividers.filter(divider => shown.some(entry => entry.group === divider.group));
+    const parts = shown.length + dividers.length + (withIndicator ? 1 : 0);
+    const space = [...shown, ...dividers].reduce((total, part) => total + part.size, 0) + (withIndicator ? fit.indicatorSize : 0);
+    return space + fit.gap * Math.max(0, parts - 1);
+  };
+  if (!fit.reserveIndicator && used(false) <= fit.available + 0.5) {
+    return [...visible].sort();
+  }
+  const floor = Math.max(fit.minimumVisible, fit.items.filter(entry => entry.pinned).length);
+  const order = fit.items
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => !entry.pinned)
+    .sort((a, b) => a.entry.priority - b.entry.priority || (fit.overflowDirection === "end" ? b.index - a.index : a.index - b.index));
+  for (const { entry } of order) {
+    if (used(true) <= fit.available + 0.5 || visible.size <= floor) {
+      break;
+    }
+    visible.delete(entry.value);
+  }
+  return [...visible].sort();
+}
+
+describe("fitItems with many items", () => {
+  it("fits as the rules read, written out plainly, for random lines", () => {
+    let seed = 3;
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    for (let round = 0; round < 300; round++) {
+      const groups = ["one", "two", "three"];
+      const items = Array.from({ length: Math.floor(random() * 20) }, (_, index) => item(`item-${index}`, 10 + Math.floor(random() * 90), {
+        priority: Math.floor(random() * 3) - 1,
+        pinned: random() < 0.1,
+        group: random() < 0.6 ? groups[Math.floor(random() * 3)] : undefined,
+      }));
+      const fit = input({
+        available: Math.floor(random() * 800),
+        gap: Math.floor(random() * 3) * 4,
+        items,
+        dividers: groups.filter(() => random() < 0.5).map(group => ({ group, size: 6 })),
+        minimumVisible: Math.floor(random() * 3),
+        overflowDirection: random() < 0.5 ? "end" : "start",
+        reserveIndicator: random() < 0.2,
+      });
+      expect(visibleValues(fitItems(fit))).toEqual(referenceFit(fit));
+    }
+  });
+
+  it("fits ten thousand items quickly", () => {
+    const items = Array.from({ length: 10_000 }, (_, index) => item(`item-${index}`, 40, { group: `group-${index % 50}` }));
+    const dividers = Array.from({ length: 50 }, (_, index) => ({ group: `group-${index}`, size: 1 }));
+    const start = performance.now();
+    const result = fitItems(input({ available: 1000, items, dividers }));
+    expect(performance.now() - start).toBeLessThan(100);
+    expect(result.visible.size).toBeGreaterThan(10);
+    expect(describeOverflow(items, result.visible).hidden.length).toBe(10_000 - result.visible.size);
+  });
+});
+
 describe("describeOverflow", () => {
   it("lists hidden and visible items in document order and summarizes groups", () => {
     const items = [item("a", 1, { group: "one" }), item("b", 1, { group: "two" }), item("c", 1, { group: "two" }), item("d", 1, { group: "three" })];

@@ -1,26 +1,57 @@
 import type { FitInput, FitResult, MeasuredItem, OverflowGroupState, OverflowState } from "./types";
 import { LAYOUT_TOLERANCE } from "./constants";
 
-function usedSpace(input: FitInput, visible: ReadonlySet<string>, withIndicator: boolean): number {
-  let total = 0;
-  let count = 0;
-  for (const item of input.items) {
-    if (visible.has(item.value)) {
-      total += item.size;
-      count++;
+/**
+ * The space the visible parts take, kept up to date as items hide, so fitting a long list costs
+ * a step per item. A divider counts while its group shows an item.
+ */
+class UsedSpace {
+  private readonly input: FitInput;
+  private parts = 0;
+  private space = 0;
+  private readonly shownInGroup = new Map<string, number>();
+  private readonly dividersOf = new Map<string, { count: number; space: number }>();
+
+  constructor(input: FitInput) {
+    this.input = input;
+    for (const item of input.items) {
+      this.parts++;
+      this.space += item.size;
+      if (item.group !== undefined) {
+        this.shownInGroup.set(item.group, (this.shownInGroup.get(item.group) ?? 0) + 1);
+      }
+    }
+    for (const divider of input.dividers) {
+      const dividers = this.dividersOf.get(divider.group) ?? { count: 0, space: 0 };
+      dividers.count++;
+      dividers.space += divider.size;
+      this.dividersOf.set(divider.group, dividers);
+      if (this.shownInGroup.has(divider.group)) {
+        this.parts++;
+        this.space += divider.size;
+      }
     }
   }
-  for (const divider of input.dividers) {
-    if (input.items.some(item => item.group === divider.group && visible.has(item.value))) {
-      total += divider.size;
-      count++;
+
+  total(withIndicator: boolean): number {
+    const parts = this.parts + (withIndicator ? 1 : 0);
+    return this.space + (withIndicator ? this.input.indicatorSize : 0) + this.input.gap * Math.max(0, parts - 1);
+  }
+
+  hide(item: MeasuredItem): void {
+    this.parts--;
+    this.space -= item.size;
+    if (item.group === undefined) {
+      return;
+    }
+    const shown = this.shownInGroup.get(item.group)! - 1;
+    this.shownInGroup.set(item.group, shown);
+    const dividers = this.dividersOf.get(item.group);
+    if (shown === 0 && dividers) {
+      this.parts -= dividers.count;
+      this.space -= dividers.space;
     }
   }
-  if (withIndicator) {
-    total += input.indicatorSize;
-    count++;
-  }
-  return total + input.gap * Math.max(0, count - 1);
 }
 
 /**
@@ -47,32 +78,39 @@ function hidingOrder(items: MeasuredItem[], direction: FitInput["overflowDirecti
  */
 export function fitItems(input: FitInput): FitResult {
   const visible = new Set(input.items.map(item => item.value));
-  const fitsWithoutIndicator = usedSpace(input, visible, false) <= input.available + LAYOUT_TOLERANCE;
-  if (!input.reserveIndicator && fitsWithoutIndicator) {
+  const used = new UsedSpace(input);
+  if (!input.reserveIndicator && used.total(false) <= input.available + LAYOUT_TOLERANCE) {
     return { visible, indicatorVisible: false };
   }
   const pinnedCount = input.items.filter(item => item.pinned).length;
   const floor = Math.max(input.minimumVisible, pinnedCount);
   for (const item of hidingOrder(input.items, input.overflowDirection)) {
-    if (usedSpace(input, visible, true) <= input.available + LAYOUT_TOLERANCE || visible.size <= floor) {
+    if (used.total(true) <= input.available + LAYOUT_TOLERANCE || visible.size <= floor) {
       break;
     }
     visible.delete(item.value);
+    used.hide(item);
   }
   return { visible, indicatorVisible: input.reserveIndicator || visible.size < input.items.length };
 }
 
 export function describeOverflow(items: readonly Pick<MeasuredItem, "value" | "group">[], visible: ReadonlySet<string>): OverflowState {
-  const groups: Record<string, OverflowGroupState> = {};
-  const groupNames = new Set(items.map(item => item.group).filter((group): group is string => group !== undefined));
-  for (const group of groupNames) {
-    const members = items.filter(item => item.group === group);
-    const shown = members.filter(item => visible.has(item.value)).length;
-    groups[group] = shown === members.length ? "visible" : shown === 0 ? "hidden" : "overflow";
+  const hidden: string[] = [];
+  const shown: string[] = [];
+  const counts = new Map<string, { members: number; shown: number }>();
+  for (const item of items) {
+    const isVisible = visible.has(item.value);
+    (isVisible ? shown : hidden).push(item.value);
+    if (item.group !== undefined) {
+      const count = counts.get(item.group) ?? { members: 0, shown: 0 };
+      count.members++;
+      count.shown += isVisible ? 1 : 0;
+      counts.set(item.group, count);
+    }
   }
-  return {
-    hidden: items.filter(item => !visible.has(item.value)).map(item => item.value),
-    visible: items.filter(item => visible.has(item.value)).map(item => item.value),
-    groups,
-  };
+  const groups: Record<string, OverflowGroupState> = {};
+  for (const [group, count] of counts) {
+    groups[group] = count.shown === count.members ? "visible" : count.shown === 0 ? "hidden" : "overflow";
+  }
+  return { hidden, visible: shown, groups };
 }

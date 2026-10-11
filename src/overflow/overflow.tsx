@@ -8,9 +8,10 @@ import type { FitResult, OverflowDirection, OverflowGroupState, OverflowState } 
 import { useDirection } from "@radix-ui/react-direction";
 import * as React from "react";
 import { useComposedRefs } from "../shared/compose-refs";
-import { reorderByDocumentPosition, sortByDocumentPosition } from "../shared/dom";
+import { sortByDocumentPosition } from "../shared/dom";
 import { renderSynchronously } from "../shared/flush";
 import { Primitive } from "../shared/primitive";
+import { useRegistry } from "../shared/registry";
 import { observeElementSize } from "../shared/resize-observer";
 import { useStableCallback } from "../shared/use-stable-callback";
 import { DIVIDER_NAME, HIDDEN_STYLES, INDICATOR_NAME, ITEM_NAME, LAYOUT_TOLERANCE, ROOT_NAME } from "./constants";
@@ -74,8 +75,8 @@ function Overflow(props: OverflowProps): React.ReactNode {
   const direction = useDirection(dir);
   const [root, setRoot] = React.useState<HTMLDivElement | null>(null);
   const composedRef = useComposedRefs(ref, setRoot);
-  const [items, setItems] = React.useState<readonly ItemEntry[]>([]);
-  const [dividers, setDividers] = React.useState<readonly DividerEntry[]>([]);
+  const [items, registerEntry, refreshItems] = useRegistry<ItemEntry>(sortByDocumentPosition);
+  const [dividers, registerDivider, refreshDividers] = useRegistry<DividerEntry>(sortByDocumentPosition);
   const [indicator, setIndicator] = React.useState<HTMLElement | null>(null);
   const [result, setResult] = React.useState<FitResult | null>(null);
   // Counts size changes of the root and its parts; each one measures the line again.
@@ -215,28 +216,27 @@ function Overflow(props: OverflowProps): React.ReactNode {
     }
     const observer = new MutationObserver(() => {
       renderSynchronously(() => {
-        setItems(reorderByDocumentPosition);
-        setDividers(reorderByDocumentPosition);
+        refreshItems();
+        refreshDividers();
       });
     });
     observer.observe(root, { childList: true, subtree: true });
     return () => observer.disconnect();
-  }, [root]);
+  }, [root, refreshItems, refreshDividers]);
 
+  const valuesRef = React.useRef(new Set<string>());
   const registerItem = React.useCallback((entry: ItemEntry) => {
-    setItems((current) => {
-      if (current.some(existing => existing.value === entry.value)) {
-        throw new Error(`${ROOT_NAME} already has an item with the value "${entry.value}".`);
-      }
-      return sortByDocumentPosition([...current, entry]);
-    });
-    return () => setItems(current => current.filter(existing => existing !== entry));
-  }, []);
-
-  const registerDivider = React.useCallback((entry: DividerEntry) => {
-    setDividers(current => sortByDocumentPosition([...current, entry]));
-    return () => setDividers(current => current.filter(existing => existing !== entry));
-  }, []);
+    const values = valuesRef.current;
+    if (values.has(entry.value)) {
+      throw new Error(`${ROOT_NAME} already has an item with the value "${entry.value}".`);
+    }
+    values.add(entry.value);
+    const unregister = registerEntry(entry);
+    return () => {
+      unregister();
+      values.delete(entry.value);
+    };
+  }, [registerEntry]);
 
   const registerIndicator = React.useCallback((element: HTMLElement) => {
     setIndicator((current) => {
