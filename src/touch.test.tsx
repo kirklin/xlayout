@@ -1,7 +1,7 @@
 import * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { commands, server } from "vitest/browser";
-import { centerOf, nextFrames, touchDrag } from "../test/pointer";
+import { centerOf, nextFrames, settle, touchDrag } from "../test/pointer";
 import { getById, getByTestId, renderStrict, widthOf } from "../test/render";
 import * as Dock from "./dock";
 import * as Grid from "./grid";
@@ -242,7 +242,8 @@ describe.runIf(server.browser === "chromium")("touch", () => {
         </div>,
       );
       await touchDrag(centerOf(getByTestId("move")), 220, 60, { steps: 12 });
-      await nextFrames();
+      // The item slides from where it was dropped; the finger goes to the resize handle once it is in place.
+      await settle();
       expect(onLayoutsChange.mock.lastCall![0].base[0]).toMatchObject({ x: 2, y: 0 });
       expect(getByTestId("page").scrollTop).toBe(0);
       await touchDrag(centerOf(getByTestId("resize")), 110, 60, { steps: 12 });

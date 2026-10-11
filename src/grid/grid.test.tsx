@@ -2,7 +2,7 @@ import type { GridDrop, GridItemLayout, GridLayoutChange, GridLayouts, GridProps
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { commands, userEvent } from "vitest/browser";
-import { drag, movePointer, nextFrames, releasePointer } from "../../test/pointer";
+import { drag, movePointer, nextFrames, releasePointer, settle } from "../../test/pointer";
 import { getByTestId, renderError, renderStrict } from "../../test/render";
 import * as Grid from "./index";
 
@@ -77,13 +77,6 @@ function cells(layouts: GridLayouts, breakpoint = "base"): string[] {
 
 function announcements(): string {
   return document.querySelector("[data-xlayout-live-region=\"polite\"]")?.textContent ?? "";
-}
-
-/** Waits for React to render and then for every slide to finish, so boxes are where the layout put them. */
-async function settle(): Promise<void> {
-  await nextFrames();
-  await Promise.allSettled(document.getAnimations().map(animation => animation.finished));
-  await nextFrames();
 }
 
 describe("grid", () => {

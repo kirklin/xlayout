@@ -66,3 +66,10 @@ export async function nextFrames(count = 2): Promise<void> {
     await new Promise(resolve => requestAnimationFrame(resolve));
   }
 }
+
+/** Waits for React to render and then for every animation to finish, so boxes are where the layout put them. */
+export async function settle(): Promise<void> {
+  await nextFrames();
+  await Promise.allSettled(document.getAnimations().map(animation => animation.finished));
+  await nextFrames();
+}
