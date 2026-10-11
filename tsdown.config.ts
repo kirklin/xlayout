@@ -3,6 +3,7 @@ import { defineConfig } from "tsdown";
 export default defineConfig({
   entry: {
     "index": "src/index.ts",
+    "masonry": "src/masonry/index.ts",
     "overflow": "src/overflow/index.ts",
     "scroll-spy": "src/scroll-spy/index.ts",
     "shell": "src/shell/index.ts",
