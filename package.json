@@ -33,6 +33,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./dist/index.js",
+    "./overflow": "./dist/overflow.js",
     "./shell": "./dist/shell.js",
     "./splitter": "./dist/splitter.js",
     "./package.json": "./package.json"

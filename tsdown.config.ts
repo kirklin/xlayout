@@ -3,6 +3,7 @@ import { defineConfig } from "tsdown";
 export default defineConfig({
   entry: {
     index: "src/index.ts",
+    overflow: "src/overflow/index.ts",
     shell: "src/shell/index.ts",
     splitter: "src/splitter/index.ts",
   },
