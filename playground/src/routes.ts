@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import type * as React from "react";
-import { Columns3, Ellipsis, LayoutDashboard, LayoutGrid, PanelsTopLeft, Pin, TableOfContents } from "lucide-react";
+import { Columns3, Ellipsis, LayoutDashboard, LayoutGrid, LayoutPanelLeft, PanelsTopLeft, Pin, TableOfContents } from "lucide-react";
+import { DockPage } from "~/demos/dock";
 import { GridPage } from "~/demos/grid";
 import { MasonryPage } from "~/demos/masonry";
 import { OverflowPage } from "~/demos/overflow";
@@ -20,6 +21,7 @@ export const ROUTES: Route[] = [
   { id: "shell", label: "Shell", icon: PanelsTopLeft, page: ShellPage },
   { id: "splitter", label: "Splitter", icon: Columns3, page: SplitterPage },
   { id: "grid", label: "Grid", icon: LayoutGrid, page: GridPage },
+  { id: "dock", label: "Dock", icon: LayoutPanelLeft, page: DockPage },
   { id: "masonry", label: "Masonry", icon: LayoutDashboard, page: MasonryPage },
   { id: "overflow", label: "Overflow", icon: Ellipsis, page: OverflowPage },
   { id: "sticky", label: "Sticky", icon: Pin, page: StickyPage },

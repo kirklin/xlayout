@@ -15,3 +15,64 @@ body,
 body {
   @apply bg-zinc-50 text-zinc-900 antialiased dark:bg-zinc-950 dark:text-zinc-100;
 }
+
+/* The dock renders its structure itself; the workbench styles it through its data attributes. */
+.workbench {
+  --xlayout-dock-handle-size: 5px;
+  @apply rounded-xl border border-zinc-200 bg-zinc-100 dark:border-zinc-800 dark:bg-zinc-900;
+}
+
+.workbench [data-dock-group] {
+  @apply overflow-hidden bg-white dark:bg-zinc-950;
+}
+
+.workbench [data-dock-header] {
+  @apply h-9 border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900;
+}
+
+.workbench [data-dock-tab] {
+  @apply flex h-9 cursor-default items-center gap-1.5 border-e border-zinc-200 px-3 text-sm text-zinc-500 outline-none select-none dark:border-zinc-800 dark:text-zinc-400;
+}
+
+.workbench [data-dock-tab]:focus-visible {
+  @apply ring-2 ring-blue-500 ring-inset;
+}
+
+.workbench [data-dock-tab][data-state="active"] {
+  @apply bg-white text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100;
+}
+
+.workbench [data-dock-tab][data-dragging],
+.workbench [data-dock-tab][data-docking] {
+  @apply text-blue-600 dark:text-blue-400;
+}
+
+.workbench [data-dock-handle] {
+  @apply bg-zinc-200 outline-none transition-colors dark:bg-zinc-800;
+}
+
+.workbench [data-dock-handle]:hover,
+.workbench [data-dock-handle]:focus-visible,
+.workbench [data-dock-handle][data-state="dragging"] {
+  @apply bg-blue-500;
+}
+
+.workbench [data-dock-floating] {
+  @apply overflow-hidden rounded-lg border border-zinc-300 shadow-2xl dark:border-zinc-700;
+}
+
+.workbench [data-dock-floating] [data-dock-header] {
+  @apply cursor-grab;
+}
+
+.workbench [data-dock-float-resize] {
+  @apply cursor-nwse-resize rtl:cursor-nesw-resize;
+}
+
+.workbench [data-dock-drop-indicator] {
+  @apply rounded-md border-2 border-blue-500 bg-blue-500/15;
+}
+
+.workbench [data-dock-drop-indicator][data-target="group"] {
+  @apply bg-blue-500/10;
+}
