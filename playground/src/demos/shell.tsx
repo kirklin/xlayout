@@ -10,7 +10,7 @@ function PageSidebarDemo(): React.ReactNode {
   return (
     <Demo
       title="This page"
-      description="The navigation on the left is a Shell sidebar: it narrows to icons, resizes from its edge, toggles with Cmd or Ctrl and B, and becomes a drawer on narrow screens."
+      description="The navigation on the left is a Shell sidebar: it narrows to icons, resizes from its edge, toggles with Cmd or Ctrl and B, and becomes a drawer on narrow screens, which a finger swipes closed."
       actions={(
         <>
           <Button onClick={() => sidebar?.toggle()}>Toggle</Button>
@@ -74,7 +74,7 @@ function InspectorDemo(): React.ReactNode {
           maxWidth="26rem"
           aria-label="Details"
           className={cn(
-            "relative shrink-0 overflow-hidden border-s border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950",
+            "drawer relative shrink-0 overflow-hidden border-s border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950",
             "w-(--xlayout-shell-sidebar-offset) group-data-[hydrated]/inner:transition-[width] data-[resizing]:transition-none",
             "max-md:absolute max-md:inset-y-0 max-md:end-0 max-md:z-20 max-md:w-64 max-md:shadow-xl",
             "max-md:translate-x-full rtl:max-md:-translate-x-full max-md:data-[mode=modal]:data-[state=expanded]:translate-x-0",
@@ -99,7 +99,7 @@ function InspectorDemo(): React.ReactNode {
             <dd>Design, Review</dd>
           </dl>
         </Shell.Sidebar>
-        <Shell.SidebarOverlay sidebar="inspector" className="absolute inset-0 z-10 bg-zinc-950/30" />
+        <Shell.SidebarOverlay sidebar="inspector" className="drawer-overlay absolute inset-0 z-10 bg-zinc-950/30" />
       </Shell.Root>
     </Demo>
   );

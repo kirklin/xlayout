@@ -180,6 +180,63 @@ function GrowDemo(): React.ReactNode {
   );
 }
 
+const PHOTOS = [...GALLERY, ...MORE];
+const FEED_COUNT = 10_000;
+
+function photoAt(index: number): Photo {
+  return PHOTOS[index % PHOTOS.length]!;
+}
+
+function spanAt(index: number): number {
+  return FEATURED.has(photoAt(index).name) ? 2 : 1;
+}
+
+/** A photo not shown yet is taken to be as high as its aspect ratio makes it at the column width. */
+function estimateAt(index: number, columnWidth: number): number {
+  const photo = photoAt(index);
+  return (columnWidth * spanAt(index) * photo.height) / photo.width;
+}
+
+function FeedDemo(): React.ReactNode {
+  const rootRef = React.useRef<HTMLDivElement>(null);
+  const [layout, setLayout] = React.useState<MasonryLayoutInfo | null>(null);
+  const [rendered, setRendered] = React.useState(0);
+  React.useEffect(() => {
+    const root = rootRef.current!;
+    const count = (): void => setRendered(root.childElementCount);
+    count();
+    const observer = new MutationObserver(count);
+    observer.observe(root, { childList: true });
+    return () => observer.disconnect();
+  }, []);
+  return (
+    <Demo
+      title="Ten thousand photos"
+      description="Given a count, the root renders only the photos near the scrollport, from a function, and measures each one as it shows; the others take their height from their aspect ratio. Photos measured above what you look at keep it in place."
+    >
+      <div className="h-[560px] overflow-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
+        <Masonry.Root
+          ref={rootRef}
+          count={FEED_COUNT}
+          minColumnWidth={180}
+          maxColumns={5}
+          getItemSpan={spanAt}
+          estimateHeight={estimateAt}
+          onLayout={setLayout}
+          className="gap-3 p-3"
+        >
+          {index => (
+            <Masonry.Item>
+              <PhotoCard card={{ key: index, photo: photoAt(index), featured: false, stretch: 1 }} />
+            </Masonry.Item>
+          )}
+        </Masonry.Root>
+      </div>
+      <Readout>{`${rendered} of ${FEED_COUNT.toLocaleString("en-US")} photos rendered · ${describeLayout(layout)}`}</Readout>
+    </Demo>
+  );
+}
+
 export function MasonryPage(): React.ReactNode {
   return (
     <Page
@@ -188,6 +245,7 @@ export function MasonryPage(): React.ReactNode {
     >
       <GalleryDemo />
       <GrowDemo />
+      <FeedDemo />
     </Page>
   );
 }

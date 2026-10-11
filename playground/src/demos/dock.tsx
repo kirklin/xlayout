@@ -1,6 +1,6 @@
 import type { LucideIcon } from "lucide-react";
-import type { DockGroupRenderProps, DockLayout, DockPanelDefinition, DockTabRenderProps } from "xlayout/dock";
-import { AppWindow, FileCode2, FileText, Folder, ListTree, Maximize2, Minimize2, PanelBottom, PictureInPicture2, RotateCcw, Search, SquareTerminal, X } from "lucide-react";
+import type { DockGroupRenderProps, DockLayout, DockPanelDefinition, DockStripTabRenderProps, DockTabOverflowRenderProps, DockTabRenderProps } from "xlayout/dock";
+import { AppWindow, ChevronDown, FileCode2, FileText, Folder, ListTree, Maximize2, Minimize2, PanelBottom, PictureInPicture2, Pin, PinOff, RotateCcw, Search, SquareTerminal, X } from "lucide-react";
 import * as React from "react";
 import { Dock } from "xlayout";
 import { Button, Demo, Page, Readout } from "~/components/demo";
@@ -96,6 +96,9 @@ const PANELS: Record<string, DockPanelDefinition> = {
   outline: { title: "Outline", content: <Code text={"Dock\n  Root\n  Group\n  Tab\n  Split"} />, render: "whenVisible" },
   app: { title: "app.tsx", content: <Code text={"<Dock.Root\n  panels={panels}\n  layout={layout}\n  onLayoutChange={setLayout}\n/>"} /> },
   readme: { title: "README.md", content: <Code text={"# Workbench\n\nDrag tabs between groups, to the edges of a group or of the dock, or out of it to float."} /> },
+  grid: { title: "grid.tsx", content: <Code text={"<Grid.Root group=\"board\" removable>\n  <Grid.Item value=\"a\" />\n</Grid.Root>"} /> },
+  masonry: { title: "masonry.tsx", content: <Code text={"<Masonry.Root count={10_000}>\n  {index => <Masonry.Item />}\n</Masonry.Root>"} /> },
+  overflow: { title: "overflow.tsx", content: <Code text={"<Overflow.Root>\n  <Overflow.Item value=\"bold\" />\n</Overflow.Root>"} /> },
   preview: { title: "Preview", content: <Preview />, render: "overlay" },
   terminal: { title: "Terminal", content: <Terminal /> },
 };
@@ -103,14 +106,37 @@ const PANELS: Record<string, DockPanelDefinition> = {
 const INITIAL: DockLayout = Dock.createDockLayout({
   root: {
     orientation: "horizontal",
-    sizes: [0.22, 0.48, 0.3],
+    sizes: [0.26, 0.46, 0.28],
     children: [
-      { orientation: "vertical", sizes: [0.6, 0.4], children: [{ panels: ["explorer", "search"] }, { panels: ["outline"] }] },
-      { orientation: "vertical", sizes: [0.65, 0.35], children: [{ panels: ["app", "readme"] }, { panels: ["terminal"] }] },
+      { panels: ["explorer", "search"] },
+      { panels: ["app", "readme", "grid", "masonry", "overflow"] },
       { panels: ["preview"] },
     ],
   },
+  autoHide: [
+    { panels: ["outline"], side: "start", size: 220 },
+    { panels: ["terminal"], side: "bottom", size: 180 },
+  ],
 });
+
+function StripTabContent({ panel, title }: DockStripTabRenderProps): React.ReactNode {
+  const Icon = ICONS[panel] ?? FileText;
+  return (
+    <>
+      <Icon className="size-3.5 shrink-0" />
+      <span className="truncate">{title}</span>
+    </>
+  );
+}
+
+function TabOverflowContent({ panels }: DockTabOverflowRenderProps): React.ReactNode {
+  return (
+    <>
+      <span className="tabular-nums">{panels.length}</span>
+      <ChevronDown className="size-3.5" />
+    </>
+  );
+}
 
 function TabContent({ panel, title, closable, close }: DockTabRenderProps): React.ReactNode {
   const Icon = ICONS[panel] ?? FileText;
@@ -146,16 +172,26 @@ function GroupControls({ group, place, active, maximized, api }: DockGroupRender
         </button>
       )}
       {place === "main" && !maximized && (
+        <button type="button" aria-label="Hide along the edge" onClick={() => api.autoHide(group)} className={control}>
+          <PinOff className="size-3.5" />
+        </button>
+      )}
+      {place === "main" && !maximized && (
         <button type="button" aria-label="Float" onClick={() => api.float(active)} className={control}>
           <PictureInPicture2 className="size-3.5" />
         </button>
       )}
-      {place !== "popout" && (
+      {place === "floating" && (
         <button type="button" aria-label="Open in a window" onClick={() => api.popout(group)} className={control}>
           <AppWindow className="size-3.5" />
         </button>
       )}
-      {place !== "main" && (
+      {place === "autoHide" && (
+        <button type="button" aria-label="Keep in place" onClick={() => api.dock(group)} className={control}>
+          <Pin className="size-3.5" />
+        </button>
+      )}
+      {(place === "floating" || place === "popout") && (
         <button type="button" aria-label="Dock" onClick={() => api.dock(group)} className={control}>
           <PanelBottom className="size-3.5" />
         </button>
@@ -166,7 +202,8 @@ function GroupControls({ group, place, active, maximized, api }: DockGroupRender
 
 function describe(layout: DockLayout): string {
   const count = (node: DockLayout["root"]): number => (!node ? 0 : node.type === "group" ? 1 : node.children.reduce((sum, child) => sum + count(child), 0));
-  return `${count(layout.root)} docked groups · ${layout.floating.length} floating · ${layout.popouts.length} in windows${layout.maximized ? " · maximized" : ""}`;
+  const hidden = layout.autoHide?.length ?? 0;
+  return `${count(layout.root)} docked groups · ${hidden} hidden along the edges · ${layout.floating.length} floating · ${layout.popouts.length} in windows${layout.maximized ? " · maximized" : ""}`;
 }
 
 function WorkbenchDemo(): React.ReactNode {
@@ -174,7 +211,7 @@ function WorkbenchDemo(): React.ReactNode {
   return (
     <Demo
       title="Workbench"
-      description="Drag a tab onto other tabs, near an edge of a group to split it, past an edge of the dock to dock along it, or out of the dock to float. Drag a floating group by its header, with Shift to dock it. On a focused tab, Alt with Shift and M picks a place with the arrow keys. The preview's frame keeps ticking wherever its panel goes."
+      description="Drag a tab onto other tabs, near an edge of a group to split it, past an edge of the dock to dock along it, or out of the dock to float. Drag a floating group by its header, with Shift to dock it, or open it in a window of its own. On a focused tab, Alt with Shift and M picks a place with the arrow keys. Tabs that do not fit wait in the menu at the end of the tab bar. The outline and the terminal are hidden along the edges: their buttons slide them out over the editor, and the pin keeps a group in place. The preview's frame keeps ticking wherever its panel goes."
       actions={(
         <Button onClick={() => setLayout(INITIAL)}>
           <RotateCcw className="size-4" />
@@ -187,6 +224,8 @@ function WorkbenchDemo(): React.ReactNode {
         layout={layout}
         onLayoutChange={setLayout}
         renderTab={tab => <TabContent {...tab} />}
+        renderStripTab={tab => <StripTabContent {...tab} />}
+        renderTabOverflow={overflow => <TabOverflowContent {...overflow} />}
         renderGroupControls={group => <GroupControls {...group} />}
         handleLabel="Resize groups"
         className="workbench h-[520px]"

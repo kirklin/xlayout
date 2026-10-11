@@ -181,10 +181,12 @@ function Card({ widget }: { widget: Widget }): React.ReactNode {
   );
 }
 
+const VERBS: Record<GridLayoutChange["reason"], string> = { move: "moved", resize: "resized", add: "added", remove: "removed" };
+
 /** Sits below the grid, out of its flow, since everything inside the grid takes part in its layout. */
 function Status({ change }: { change: GridLayoutChange | null }): React.ReactNode {
   const { breakpoint, columns } = Grid.useGrid();
-  const last = change ? ` · last ${change.reason === "move" ? "moved" : "resized"} ${change.value} at ${change.breakpoint}` : "";
+  const last = change ? ` · last ${VERBS[change.reason]} ${change.value} at ${change.breakpoint}` : "";
   return (
     <div className="absolute start-0 top-full mt-4">
       <Readout>{`${breakpoint ?? "…"} · ${columns ?? "…"} columns${last}`}</Readout>
@@ -310,6 +312,141 @@ function PaletteDemo(): React.ReactNode {
   );
 }
 
+type BoardName = "today" | "later";
+
+interface Task {
+  title: string;
+  tag: string;
+  /** The color of the tag's dot. */
+  tone: string;
+}
+
+const TASKS: Record<string, Task> = {
+  "plan-sprint": { title: "Plan the sprint", tag: "Planning", tone: "bg-violet-500" },
+  "review-designs": { title: "Review the new designs", tag: "Design", tone: "bg-pink-500" },
+  "fix-login": { title: "Fix the login redirect", tag: "Bug", tone: "bg-red-500" },
+  "release-notes": { title: "Write the release notes", tag: "Docs", tone: "bg-amber-500" },
+  "update-packages": { title: "Update packages", tag: "Chore", tone: "bg-zinc-400" },
+  "interviews": { title: "Five user interviews", tag: "Research", tone: "bg-emerald-500" },
+  "speed-budget": { title: "Set a speed budget", tag: "Engineering", tone: "bg-blue-500" },
+};
+
+const BOARDS: { name: BoardName; label: string }[] = [{ name: "today", label: "Today" }, { name: "later", label: "Later" }];
+
+const FIRST_BOARDS: Record<BoardName, GridLayouts> = {
+  today: {
+    base: [
+      { value: "plan-sprint", x: 0, y: 0, w: 2, h: 1 },
+      { value: "review-designs", x: 2, y: 0, w: 2, h: 2 },
+      { value: "fix-login", x: 0, y: 1, w: 2, h: 1 },
+    ],
+  },
+  later: {
+    base: [
+      { value: "release-notes", x: 0, y: 0, w: 2, h: 1 },
+      { value: "update-packages", x: 2, y: 0, w: 1, h: 1 },
+      { value: "interviews", x: 3, y: 0, w: 1, h: 2 },
+      { value: "speed-budget", x: 0, y: 1, w: 3, h: 1 },
+    ],
+  },
+};
+
+const taskItem = cn(cardItem, "transition-opacity data-[leaving]:opacity-50");
+
+const edgeHandle = cn(
+  "absolute z-10 rounded-full outline-none transition-colors",
+  "hover:bg-blue-500/70 focus-visible:bg-blue-500 data-[state=picked]:bg-blue-500",
+);
+
+function TaskCard({ task }: { task: Task }): React.ReactNode {
+  return (
+    <div className="flex h-full items-start gap-1.5 overflow-hidden px-2 py-2.5">
+      <Grid.DragHandle aria-label={`Move ${task.title}`} className={cn(iconButton, "size-6 cursor-grab")}>
+        <GripVertical className="size-4" />
+      </Grid.DragHandle>
+      <div className="flex min-w-0 flex-1 flex-col gap-1">
+        <span className="truncate text-sm font-medium">{task.title}</span>
+        <span className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+          <span className={cn("size-2 shrink-0 rounded-full", task.tone)} />
+          <span className="truncate">{task.tag}</span>
+        </span>
+      </div>
+      <Grid.ResizeHandle edge="start" aria-label={`Resize ${task.title} from the start`} className={cn(edgeHandle, "inset-y-3 start-0 w-1 cursor-ew-resize")} />
+      <Grid.ResizeHandle edge="end" aria-label={`Resize ${task.title} from the end`} className={cn(edgeHandle, "inset-y-3 end-0 w-1 cursor-ew-resize")} />
+      <Grid.ResizeHandle edge="bottom" aria-label={`Resize ${task.title} from the bottom`} className={cn(edgeHandle, "inset-x-3 bottom-0 h-1 cursor-ns-resize")} />
+    </div>
+  );
+}
+
+function BoardsDemo(): React.ReactNode {
+  const [boards, setBoards] = React.useState(FIRST_BOARDS);
+  // An item that goes to the other board arrives there before it leaves here, so this knows where it went.
+  const boardsRef = React.useRef(FIRST_BOARDS);
+  const [last, setLast] = React.useState<string | null>(null);
+  const report = (name: BoardName, label: string, next: GridLayouts, change: GridLayoutChange): void => {
+    const current = { ...boardsRef.current, [name]: next };
+    boardsRef.current = current;
+    setBoards(current);
+    const title = `“${TASKS[change.value]?.title ?? change.value}”`;
+    if (change.reason === "remove") {
+      const elsewhere = BOARDS.some(board => board.name !== name && current[board.name].base?.some(item => item.value === change.value));
+      if (!elsewhere) {
+        setLast(`Removed ${title}`);
+      }
+      return;
+    }
+    setLast(change.reason === "add" ? `Moved ${title} to ${label}` : `${change.reason === "move" ? "Moved" : "Resized"} ${title} in ${label}`);
+  };
+  return (
+    <Demo
+      title="Boards"
+      description="Two boards in one group share their tasks. Drag a task onto the other board, or off both to remove it; with the keyboard, Space picks it up, the arrows carry it past the edge into the other board and Delete removes it. The bars on a task's sides and bottom resize it from that edge."
+      actions={(
+        <Button onClick={() => {
+          boardsRef.current = FIRST_BOARDS;
+          setBoards(FIRST_BOARDS);
+          setLast(null);
+        }}
+        >
+          <RotateCcw className="size-4" />
+          Reset
+        </Button>
+      )}
+    >
+      <div className="grid gap-4 sm:grid-cols-2">
+        {BOARDS.map(({ name, label }) => (
+          <section key={name} className="flex flex-col gap-2">
+            <h3 className="text-sm font-medium text-zinc-500 dark:text-zinc-400">{label}</h3>
+            <Grid.Root
+              aria-label={label}
+              group="planning"
+              removable
+              columns={4}
+              rowHeight={56}
+              gap={8}
+              layouts={boards[name]}
+              onLayoutsChange={(next, change) => report(name, label, next, change)}
+              className={cn(
+                "min-h-56 rounded-2xl border border-zinc-200 bg-zinc-100/60 p-2 transition-colors dark:border-zinc-800 dark:bg-zinc-900/60",
+                "data-[state=dropping]:border-blue-400 data-[state=dropping]:bg-blue-50/60 dark:data-[state=dropping]:bg-blue-950/30",
+                "data-[state=removing]:border-red-300 data-[state=removing]:bg-red-50/60 dark:data-[state=removing]:border-red-900 dark:data-[state=removing]:bg-red-950/30",
+              )}
+            >
+              {(boards[name].base ?? []).map(item => (
+                <Grid.Item key={item.value} value={item.value} label={TASKS[item.value]!.title} className={taskItem}>
+                  <TaskCard task={TASKS[item.value]!} />
+                </Grid.Item>
+              ))}
+              <Grid.Placeholder className={placeholder} />
+            </Grid.Root>
+          </section>
+        ))}
+      </div>
+      <Readout>{last ?? "Nothing moved yet"}</Readout>
+    </Demo>
+  );
+}
+
 export function GridPage(): React.ReactNode {
   return (
     <Page
@@ -317,6 +454,7 @@ export function GridPage(): React.ReactNode {
       description="A dashboard grid with a layout for each width it reaches. Items take whole cells and move or resize by pointer, keyboard or code; others make way, and a single item of the same size swaps once passed halfway."
     >
       <DashboardDemo />
+      <BoardsDemo />
       <PaletteDemo />
     </Page>
   );

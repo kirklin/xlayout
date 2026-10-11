@@ -62,7 +62,7 @@ export function App(): React.ReactNode {
         defaultWidth="15rem"
         aria-label="Components"
         className={cn(
-          "group/sidebar relative flex shrink-0 flex-col overflow-hidden border-e border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950",
+          "drawer group/sidebar relative flex shrink-0 flex-col overflow-hidden border-e border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950",
           "w-(--xlayout-shell-sidebar-offset) group-data-[hydrated]/root:transition-[width] group-data-[hydrated]/root:duration-200 data-[resizing]:transition-none",
           "max-md:fixed max-md:inset-y-0 max-md:start-0 max-md:z-50 max-md:w-72 max-md:shadow-xl",
           "max-md:-translate-x-full rtl:max-md:translate-x-full max-md:data-[mode=modal]:data-[state=expanded]:translate-x-0",
@@ -80,7 +80,7 @@ export function App(): React.ReactNode {
           className="absolute inset-y-0 end-0 z-10 w-1.5 translate-x-1/2 cursor-col-resize outline-none hover:bg-blue-400/60 focus-visible:bg-blue-500 data-[state=dragging]:bg-blue-500 rtl:-translate-x-1/2"
         />
       </Shell.Sidebar>
-      <Shell.SidebarOverlay sidebar="nav" className="fixed inset-0 z-40 bg-zinc-950/40 backdrop-blur-[1px]" />
+      <Shell.SidebarOverlay sidebar="nav" className="drawer-overlay fixed inset-0 z-40 bg-zinc-950/40 backdrop-blur-[1px]" />
       <div className="flex min-w-0 flex-1 flex-col">
         <Shell.Header className="flex h-12 shrink-0 items-center gap-2 border-b border-zinc-200 px-3 dark:border-zinc-800">
           <Shell.SidebarTrigger
