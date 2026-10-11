@@ -127,9 +127,11 @@ describe("masonry", () => {
   });
 
   it("marks items placed one frame after they got their place", async () => {
-    await renderStrict(<Gallery items={[40]} />);
-    expect(getByTestId("item-0").dataset.placed).toBeUndefined();
+    // The layout is reported in the commit that places the items, before any frame passes.
+    const placedWhenLaidOut: (string | undefined)[] = [];
+    await renderStrict(<Gallery items={[40]} onLayout={() => placedWhenLaidOut.push(getByTestId("item-0").dataset.placed)} />);
     await nextFrames(2);
+    expect(placedWhenLaidOut).toEqual([undefined]);
     expect(getByTestId("item-0").dataset.placed).toBe("");
   });
 
