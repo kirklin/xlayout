@@ -20,25 +20,31 @@ export function referenceOf(element: HTMLElement): HTMLElement {
 }
 
 /**
- * The element's position in the reference's content. A reference that scrolls moves its
+ * Where the reference's content starts in the viewport. A reference that scrolls moves its
  * content under its own box, so its scroll position counts too; the root element's box
  * scrolls along with the content.
  */
-export function offsetWithin(element: Element, reference: Element): Point {
-  const rect = element.getBoundingClientRect();
-  const referenceRect = reference.getBoundingClientRect();
+export function contentOrigin(reference: Element): Point {
+  const rect = reference.getBoundingClientRect();
   const scrolls = reference !== reference.ownerDocument.documentElement;
   return {
-    x: rect.left - referenceRect.left + (scrolls ? reference.scrollLeft : 0),
-    y: rect.top - referenceRect.top + (scrolls ? reference.scrollTop : 0),
+    x: rect.left - (scrolls ? reference.scrollLeft : 0),
+    y: rect.top - (scrolls ? reference.scrollTop : 0),
   };
 }
 
+/** The element's position in the content whose origin is given. */
+export function offsetFrom(element: Element, origin: Point): Point {
+  const rect = element.getBoundingClientRect();
+  return { x: rect.left - origin.x, y: rect.top - origin.y };
+}
+
 /**
- * Where the element sits in normal flow. Relative positioning without offsets puts it there
- * and keeps it the containing block of its positioned descendants, so nothing else moves.
+ * Puts the element where it sits in normal flow, and returns what puts it back. Relative
+ * positioning without offsets puts it there and keeps it the containing block of its
+ * positioned descendants, so nothing else moves.
  */
-export function measureStaticOffset(element: HTMLElement, reference: Element): Point {
+export function holdInFlow(element: HTMLElement): () => void {
   const { style } = element;
   const saved = ["position", ...PHYSICAL_SIDES].map(name => ({
     name,
@@ -49,15 +55,15 @@ export function measureStaticOffset(element: HTMLElement, reference: Element): P
   for (const side of PHYSICAL_SIDES) {
     style.setProperty(side, "auto", "important");
   }
-  const offset = offsetWithin(element, reference);
-  for (const { name, value, priority } of saved) {
-    if (value) {
-      style.setProperty(name, value, priority);
-    } else {
-      style.removeProperty(name);
+  return () => {
+    for (const { name, value, priority } of saved) {
+      if (value) {
+        style.setProperty(name, value, priority);
+      } else {
+        style.removeProperty(name);
+      }
     }
-  }
-  return offset;
+  };
 }
 
 /** The pixel value of an inset, which a sticky element always has on the sides it sticks to. */

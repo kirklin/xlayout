@@ -9,13 +9,13 @@ import { getOwnerWindow } from "../shared/dom";
 import { renderSynchronously } from "../shared/flush";
 import { Primitive } from "../shared/primitive";
 import { measureElementSize, observeElementSize } from "../shared/resize-observer";
-import { onScrollFrame } from "../shared/scroll";
 import { useStableCallback } from "../shared/use-stable-callback";
 import { PHYSICAL_SIDES, ROOT_NAME } from "./constants";
 import { StickyContext, StickyGroupContext } from "./context";
-import { measureStaticOffset, offsetWithin, referenceOf, resolvedInset } from "./measure";
+import { referenceOf, resolvedInset } from "./measure";
 import { resolveSides, stuckSides } from "./sides";
 import { stackLayers } from "./stack";
+import { trackSticky } from "./tracker";
 
 const NOT_STUCK: readonly StickySide[] = [];
 
@@ -87,63 +87,14 @@ function Sticky(props: StickyProps): React.ReactNode {
       return;
     }
     resolveSides(sides, directionOf(element));
-    const reference = referenceOf(element);
-    let staticOffset = measureStaticOffset(element, reference);
-    let tracking = true;
-    const read = (): readonly StickySide[] => {
-      const current = offsetWithin(element, reference);
-      const displacement = { x: current.x - staticOffset.x, y: current.y - staticOffset.y };
-      return stuckSides(displacement, resolveSides(sides, directionOf(element)));
-    };
-    const update = (): void => {
-      const next = read();
+    // The stuck state is measured before the first paint, with every other sticky element.
+    return trackSticky(element, referenceOf(element), (displacement) => {
+      const next = stuckSides(displacement, resolveSides(sides, directionOf(element)));
       if (!sameSides(next, stuckRef.current)) {
         stuckRef.current = next;
-        renderSynchronously(() => setStuck(next));
+        setStuck(next);
       }
-    };
-
-    let pending = false;
-    const remeasure = (): void => {
-      if (pending) {
-        return;
-      }
-      pending = true;
-      // One measurement for every size reported in the same callback.
-      queueMicrotask(() => {
-        pending = false;
-        if (tracking) {
-          staticOffset = measureStaticOffset(element, reference);
-          update();
-        }
-      });
-    };
-    // Where the element sits in normal flow changes when anything beside it resizes, or
-    // when siblings come and go.
-    let stopObserving: (() => void)[] = [];
-    const observeSiblings = (): void => {
-      stopObserving.forEach(stop => stop());
-      stopObserving = [reference, ...reference.children].map(node => observeElementSize(node, remeasure));
-    };
-    observeSiblings();
-    const mutationObserver = new MutationObserver(() => {
-      observeSiblings();
-      remeasure();
     });
-    mutationObserver.observe(reference, { childList: true });
-    const stopScrolling = onScrollFrame(element.ownerDocument, update);
-
-    const initial = read();
-    stuckRef.current = initial;
-    // Measuring in a layout effect shows the stuck state before the first paint.
-    // eslint-disable-next-line react/set-state-in-effect
-    setStuck(initial);
-    return () => {
-      tracking = false;
-      stopScrolling();
-      mutationObserver.disconnect();
-      stopObserving.forEach(stop => stop());
-    };
   }, [element, sides, insetKey]);
 
   const handleStuckChange = useStableCallback(onStuckChange);

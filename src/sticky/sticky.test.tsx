@@ -137,6 +137,37 @@ describe("sticky", () => {
     expect(stuckOf("header")).toBe("top");
   });
 
+  it("follows hundreds of section headers in one list", async () => {
+    function List({ grown }: { grown: number }): React.ReactNode {
+      return (
+        // Without scroll anchoring the scroll position stays when content above it grows.
+        <div data-testid="scroller" style={{ height: 300, overflow: "auto", overflowAnchor: "none" }}>
+          {Array.from({ length: 300 }, (_, section) => (
+            <section key={section}>
+              <Sticky.Root data-testid={`header-${section}`} style={{ height: 20 }}>{`Section ${section}`}</Sticky.Root>
+              {[0, 1, 2].map(row => <div key={row} style={{ height: section === grown && row === 0 ? 200 : 40 }} />)}
+            </section>
+          ))}
+        </div>
+      );
+    }
+    const view = await renderStrict(<List grown={-1} />);
+    // Headers of the sections scrolled past stay moved to the ends of their sections, so the
+    // last stuck header is the one at the top.
+    const lastStuck = (): string | undefined => [...document.querySelectorAll<HTMLElement>("[data-stuck]")].at(-1)?.dataset.testid;
+    // Each section is 140px, so 14,010 is 10px into section 100.
+    await scrollTo("scroller", { top: 14_010 });
+    expect(lastStuck()).toBe("header-100");
+    expect(topWithin("header-100", "scroller")).toBe(0);
+    // A row growing 160px in section 50 moves every header after it.
+    await view.rerender(<List grown={50} />);
+    await nextFrames(3);
+    expect(lastStuck()).toBe("header-98");
+    await scrollTo("scroller", { top: 14_170 });
+    expect(lastStuck()).toBe("header-100");
+    expect(stuckOf("header-101")).toBeUndefined();
+  });
+
   it("tells its content whether it is stuck", async () => {
     function Title(): React.ReactNode {
       const { isStuck, stuckSides } = Sticky.useSticky();
