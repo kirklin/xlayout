@@ -8,6 +8,9 @@ export const SECTION_NAME = "ScrollSpy.Section";
 /** Scroll positions land on fractions of a pixel; a section this close counts as reached. */
 export const POSITION_TOLERANCE = 1;
 
+/** A section measured this close to where it was measured before has not moved. */
+export const GEOMETRY_TOLERANCE = 0.5;
+
 /** How long scrolling must rest before the URL follows the active section. */
 export const HASH_SYNC_DELAY = 300;
 

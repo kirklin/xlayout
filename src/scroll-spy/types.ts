@@ -8,16 +8,16 @@ export type ScrollSpyNavigation = "native" | "replace" | "none";
 /** What is active before scrolling reaches the first section: the first section, or nothing. */
 export type ScrollSpyFallback = "first" | "none";
 
-/** Where the sections are relative to the scrollport, along the block axis. */
-export interface SectionMeasurement {
+/** Where the sections are in the scroller's content along the block axis, which scrolling does not change. */
+export interface SectionGeometry {
+  /** Where each section starts and ends in the content. */
+  tops: Float64Array;
+  bottoms: Float64Array;
   /** For each section, the scroll position that brings its start to the top of the scrollport. */
   positions: number[];
-  scrollPosition: number;
+  /** The scroller's scroll padding at the top. */
+  paddingTop: number;
   scrollportSize: number;
   /** How far the scroller can scroll. */
   scrollRange: number;
-  /** Whether each section shows in the scrollport. */
-  visible: boolean[];
-  /** Whether each section ends above the scrollport's top, after scroll padding. */
-  passed: boolean[];
 }

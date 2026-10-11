@@ -1,6 +1,8 @@
 "use client";
 
+import type { SpyState } from "./context";
 import * as React from "react";
+import { useStoreSelector } from "../shared/store";
 import { useScrollSpyContext } from "./context";
 
 export interface ScrollSpyApi {
@@ -14,8 +16,13 @@ export interface ScrollSpyApi {
   navigate: (value: string) => void;
 }
 
+function selectState(state: SpyState): SpyState {
+  return state;
+}
+
 export function useScrollSpy(): ScrollSpyApi {
-  const { active, visible, passed, navigate } = useScrollSpyContext("useScrollSpy");
+  const { state, navigate } = useScrollSpyContext("useScrollSpy");
+  const { active, visible, passed } = useStoreSelector(state, selectState);
   const navigateTo = React.useCallback((value: string) => navigate(value), [navigate]);
   return React.useMemo(() => ({
     value: active,

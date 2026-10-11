@@ -1,18 +1,23 @@
 "use client";
 
 import type { PrimitiveProps } from "../shared/primitive";
+import type { Store } from "../shared/store";
 import type { Rect } from "../shared/types";
-import type { ItemContextValue, ItemEntry, NavContextValue, ScrollSpyContextValue, SectionEntry } from "./context";
-import type { ScrollSpyFallback, ScrollSpyNavigation } from "./types";
+import type { ItemContextValue, ItemEntry, NavContextValue, ScrollSpyContextValue, SectionEntry, SpyState } from "./context";
+import type { PreparedPositions } from "./select";
+import type { ScrollSpyFallback, ScrollSpyNavigation, SectionGeometry } from "./types";
 import * as React from "react";
 import { useComposedRefs } from "../shared/compose-refs";
 import { getOwnerWindow, isEditableTarget, sortByDocumentPosition } from "../shared/dom";
 import { composeEventHandlers } from "../shared/events";
 import { renderSynchronously } from "../shared/flush";
 import { Primitive } from "../shared/primitive";
+import { useRegistry } from "../shared/registry";
 import { observeElementSize } from "../shared/resize-observer";
 import { onScrollFrame, revealWithin } from "../shared/scroll";
+import { createStore, useStoreSelector } from "../shared/store";
 import { useControllableState } from "../shared/use-controllable-state";
+import { useStableCallback } from "../shared/use-stable-callback";
 import {
   HASH_SYNC_DELAY,
   ITEM_NAME,
@@ -25,8 +30,8 @@ import {
   SECTION_NAME,
 } from "./constants";
 import { ItemContext, NavContext, ScrollSpyContext, useScrollSpyContext } from "./context";
-import { boxWithin, measureSections, scrollerOf } from "./measure";
-import { redistributePositions, selectSection } from "./select";
+import { boxWithin, measureSections, scrollerOf, sectionsStayed } from "./measure";
+import { countUpTo, preparePositions, redistributePositions, selectPrepared } from "./select";
 
 interface SectionView {
   visible: ReadonlySet<string>;
@@ -34,6 +39,41 @@ interface SectionView {
 }
 
 const EMPTY_VIEW: SectionView = { visible: new Set(), passed: new Set() };
+
+/** The sections' places put in order once, so a scroll position needs only searching them. */
+interface SectionOrder {
+  positions: PreparedPositions;
+  /** Where the sections start, and where they end, each ascending. */
+  tops: Float64Array;
+  bottoms: Float64Array;
+}
+
+function orderOf(geometry: SectionGeometry): SectionOrder {
+  return {
+    positions: preparePositions(redistributePositions(geometry.positions, geometry.scrollportSize, geometry.scrollRange)),
+    tops: Float64Array.from(geometry.tops).sort(),
+    bottoms: Float64Array.from(geometry.bottoms).sort(),
+  };
+}
+
+const ACTIVE = 1;
+const VISIBLE = 2;
+const PASSED = 4;
+const IN_TRAIL = 8;
+
+/** What the state says of the section with `value`, as the flags above. */
+function flagsOf(state: SpyState, value: string): number {
+  return (state.active === value ? ACTIVE : 0)
+    | (state.visible.has(value) ? VISIBLE : 0)
+    | (state.passed.has(value) ? PASSED : 0)
+    | (state.trail.has(value) ? IN_TRAIL : 0);
+}
+
+/** The flags in `mask` of the section with `value`; the part renders again only when they change. */
+function useFlags(state: Store<SpyState>, value: string, mask: number): number {
+  const select = React.useCallback((current: SpyState) => flagsOf(current, value) & mask, [value, mask]);
+  return useStoreSelector(state, select);
+}
 
 /** The section a link click keeps active until the reader scrolls on their own. */
 interface Hold {
@@ -87,8 +127,8 @@ function ScrollSpy(props: ScrollSpyProps): React.ReactNode {
     onChange: onValueChange,
     caller: ROOT_NAME,
   });
-  const [sections, setSections] = React.useState<readonly SectionEntry[]>([]);
-  const [items, setItems] = React.useState<readonly ItemEntry[]>([]);
+  const [sections, registerSectionEntry] = useRegistry<SectionEntry>(sortByDocumentPosition);
+  const [items, registerItem] = useRegistry<ItemEntry>();
   const [view, setView] = React.useState(EMPTY_VIEW);
   const viewRef = React.useRef(EMPTY_VIEW);
   const holdRef = React.useRef<Hold | null>(null);
@@ -105,27 +145,60 @@ function ScrollSpy(props: ScrollSpyProps): React.ReactNode {
     const ownerDocument = scroller.ownerDocument;
     const ownerWindow = getOwnerWindow(scroller);
     const scrollsDocument = scroller === ownerDocument.scrollingElement;
+    const indexOf = new Map(sections.map((entry, index) => [entry.value, index]));
     let tracking = true;
 
+    // Where the sections are in the scroller's content, measured again only when they moved, so
+    // a scroll reads the scroll position and searches.
+    let geometry = measureSections(scroller, elements);
+    let order = orderOf(geometry);
+    let stale = false;
+    let shown: { counts: readonly number[]; view: SectionView } | null = null;
+
+    const viewAt = (scrollPosition: number): SectionView => {
+      const { tops, bottoms, paddingTop, scrollportSize } = geometry;
+      // The sections that show or were passed change only as a start or an end crosses the
+      // scrollport's top or bottom, which these counts follow.
+      const counts = [
+        countUpTo(order.bottoms, scrollPosition + paddingTop, true),
+        countUpTo(order.bottoms, scrollPosition, true),
+        countUpTo(order.tops, scrollPosition + scrollportSize, false),
+      ];
+      if (shown && shown.counts.every((count, index) => count === counts[index])) {
+        return shown.view;
+      }
+      const visible = new Set<string>();
+      const passed = new Set<string>();
+      sections.forEach((entry, index) => {
+        if (bottoms[index]! > scrollPosition && tops[index]! < scrollPosition + scrollportSize) {
+          visible.add(entry.value);
+        }
+        if (bottoms[index]! <= scrollPosition + paddingTop) {
+          passed.add(entry.value);
+        }
+      });
+      shown = { counts, view: { visible, passed } };
+      return shown.view;
+    };
+
     const measure = (): { active: string | null; view: SectionView } => {
-      const measurement = measureSections(scroller, elements);
+      if (stale || !sectionsStayed(scroller, elements, geometry)) {
+        stale = false;
+        geometry = measureSections(scroller, elements);
+        order = orderOf(geometry);
+        shown = null;
+      }
+      const scrollPosition = scroller.scrollTop;
       const hold = holdRef.current;
-      let index = hold ? sections.findIndex(entry => entry.value === hold.value) : -1;
+      let index = hold ? indexOf.get(hold.value) ?? -1 : -1;
       if (index === -1) {
         holdRef.current = null;
-        const positions = redistributePositions(measurement.positions, measurement.scrollportSize, measurement.scrollRange);
-        index = selectSection(positions, measurement.scrollPosition, measurement.scrollportSize);
+        index = selectPrepared(order.positions, scrollPosition, geometry.scrollportSize);
         if (index === -1 && fallback === "first") {
           index = 0;
         }
       }
-      return {
-        active: index === -1 ? null : sections[index]!.value,
-        view: {
-          visible: new Set(sections.filter((_, position) => measurement.visible[position]).map(entry => entry.value)),
-          passed: new Set(sections.filter((_, position) => measurement.passed[position]).map(entry => entry.value)),
-        },
-      };
+      return { active: index === -1 ? null : sections[index]!.value, view: viewAt(scrollPosition) };
     };
     const apply = (next: { active: string | null; view: SectionView }): void => {
       if (next.active !== measuredRef.current) {
@@ -233,6 +306,7 @@ function ScrollSpy(props: ScrollSpyProps): React.ReactNode {
 
     let pending = false;
     const updateLater = (): void => {
+      stale = true;
       if (pending) {
         return;
       }
@@ -244,6 +318,11 @@ function ScrollSpy(props: ScrollSpyProps): React.ReactNode {
     };
     const containers = new Set<Element>([scroller, ...elements, ...elements.flatMap(element => (element.parentElement ? [element.parentElement] : []))]);
     const stopObserving = [...containers].map(element => observeElementSize(element, updateLater));
+    // Scroll margins and scroll padding change where sections become active without moving anything.
+    const styles = new MutationObserver(updateLater);
+    for (const element of [scroller, ...elements]) {
+      styles.observe(element, { attributes: true, attributeFilter: ["style", "class"] });
+    }
 
     // Measuring in a layout effect marks the active section before the first paint.
     apply(measure());
@@ -252,6 +331,7 @@ function ScrollSpy(props: ScrollSpyProps): React.ReactNode {
       clearTimeout(hashTimer);
       stopScrollFrames();
       stopObserving.forEach(stop => stop());
+      styles.disconnect();
       scrollTarget.removeEventListener("scroll", onScroll);
       ownerDocument.removeEventListener("wheel", onWheelOrTouch, { capture: true });
       ownerDocument.removeEventListener("touchmove", onWheelOrTouch, { capture: true });
@@ -261,7 +341,7 @@ function ScrollSpy(props: ScrollSpyProps): React.ReactNode {
     };
   }, [sections, fallback, syncHash, setActive]);
 
-  const navigate = React.useCallback((value: string, event?: React.MouseEvent<HTMLAnchorElement>) => {
+  const navigate = useStableCallback((value: string, event?: React.MouseEvent<HTMLAnchorElement>) => {
     const section = sections.find(entry => entry.value === value);
     if (!section) {
       throw new Error(`${ROOT_NAME} has no ${SECTION_NAME} with the value "${value}".`);
@@ -285,32 +365,34 @@ function ScrollSpy(props: ScrollSpyProps): React.ReactNode {
         ownerWindow.history.pushState(null, "", url);
       }
     }
-  }, [sections, navigation, setActive]);
+  });
 
+  const sectionValuesRef = React.useRef(new Set<string>());
   const registerSection = React.useCallback((entry: SectionEntry) => {
-    setSections((current) => {
-      if (current.some(existing => existing.value === entry.value)) {
-        throw new Error(`${ROOT_NAME} already has a ${SECTION_NAME} with the value "${entry.value}".`);
-      }
-      return sortByDocumentPosition([...current, entry]);
-    });
-    return () => setSections(current => current.filter(existing => existing !== entry));
-  }, []);
+    const values = sectionValuesRef.current;
+    if (values.has(entry.value)) {
+      throw new Error(`${ROOT_NAME} already has a ${SECTION_NAME} with the value "${entry.value}".`);
+    }
+    values.add(entry.value);
+    const unregister = registerSectionEntry(entry);
+    return () => {
+      unregister();
+      values.delete(entry.value);
+    };
+  }, [registerSectionEntry]);
 
-  const registerItem = React.useCallback((entry: ItemEntry) => {
-    setItems(current => [...current, entry]);
-    return () => setItems(current => current.filter(existing => existing !== entry));
-  }, []);
-
-  const trail = React.useMemo(() => {
-    const parents = new Map<string, string | null>();
+  const parents = React.useMemo(() => {
+    const result = new Map<string, string | null>();
     for (const entry of items) {
-      const known = parents.get(entry.value);
+      const known = result.get(entry.value);
       if (known !== undefined && known !== entry.parent) {
         throw new Error(`${ROOT_NAME} has items with the value "${entry.value}" nested in different items.`);
       }
-      parents.set(entry.value, entry.parent);
+      result.set(entry.value, entry.parent);
     }
+    return result;
+  }, [items]);
+  const trail = React.useMemo(() => {
     const ancestors = new Set<string>();
     let parent = active === null ? null : parents.get(active) ?? null;
     while (parent !== null && !ancestors.has(parent)) {
@@ -318,18 +400,21 @@ function ScrollSpy(props: ScrollSpyProps): React.ReactNode {
       parent = parents.get(parent) ?? null;
     }
     return ancestors;
-  }, [items, active]);
+  }, [parents, active]);
+
+  const state = React.useMemo((): SpyState => ({ active, visible: view.visible, passed: view.passed, trail }), [active, view, trail]);
+  const [store] = React.useState(() => createStore(state));
+  React.useLayoutEffect(() => {
+    store.set(state);
+  }, [store, state]);
 
   const contextValue = React.useMemo((): ScrollSpyContextValue => ({
-    active,
-    visible: view.visible,
-    passed: view.passed,
-    trail,
+    state: store,
     ariaCurrent,
     registerSection,
     registerItem,
     navigate,
-  }), [active, view, trail, ariaCurrent, registerSection, registerItem, navigate]);
+  }), [store, ariaCurrent, registerSection, registerItem, navigate]);
 
   return <ScrollSpyContext value={contextValue}>{children}</ScrollSpyContext>;
 }
@@ -450,11 +535,12 @@ function ScrollSpyItem(props: ScrollSpyItemProps): React.ReactNode {
   );
   const composedRef = useComposedRefs(ref, register);
   const itemContext = React.useMemo((): ItemContextValue => ({ value, depth }), [value, depth]);
+  const flags = useFlags(context.state, value, ACTIVE | IN_TRAIL);
   return (
     <ItemContext value={itemContext}>
       <Primitive.li
-        data-state={context.active === value ? "active" : "inactive"}
-        data-active-trail={context.trail.has(value) ? "" : undefined}
+        data-state={flags & ACTIVE ? "active" : "inactive"}
+        data-active-trail={flags & IN_TRAIL ? "" : undefined}
         data-depth={depth}
         {...itemProps}
         ref={composedRef}
@@ -476,7 +562,8 @@ function ScrollSpyLink(props: ScrollSpyLinkProps): React.ReactNode {
   const nav = React.use(NavContext);
   const [element, setElement] = React.useState<HTMLAnchorElement | null>(null);
   const composedRef = useComposedRefs(ref, setElement);
-  const isActive = context.active === item.value;
+  const flags = useFlags(context.state, item.value, ACTIVE | VISIBLE | PASSED | IN_TRAIL);
+  const isActive = (flags & ACTIVE) !== 0;
   const showActiveLink = nav?.showActiveLink;
   React.useLayoutEffect(
     () => (isActive && element && showActiveLink ? showActiveLink(element) : undefined),
@@ -487,9 +574,9 @@ function ScrollSpyLink(props: ScrollSpyLinkProps): React.ReactNode {
       href={`#${item.value}`}
       aria-current={isActive ? context.ariaCurrent : undefined}
       data-state={isActive ? "active" : "inactive"}
-      data-visible={context.visible.has(item.value) ? "" : undefined}
-      data-passed={context.passed.has(item.value) ? "" : undefined}
-      data-active-trail={context.trail.has(item.value) ? "" : undefined}
+      data-visible={flags & VISIBLE ? "" : undefined}
+      data-passed={flags & PASSED ? "" : undefined}
+      data-active-trail={flags & IN_TRAIL ? "" : undefined}
       data-depth={item.depth}
       {...linkProps}
       ref={composedRef}
@@ -517,14 +604,15 @@ function ScrollSpySection(props: ScrollSpySectionProps): React.ReactNode {
     [registerSection, value],
   );
   const composedRef = useComposedRefs(ref, register);
+  const flags = useFlags(context.state, value, ACTIVE | VISIBLE | PASSED);
   return (
     <Primitive.section
       id={value}
       // Navigation moves focus here, so reading continues from the section.
       tabIndex={-1}
-      data-state={context.active === value ? "active" : "inactive"}
-      data-visible={context.visible.has(value) ? "" : undefined}
-      data-passed={context.passed.has(value) ? "" : undefined}
+      data-state={flags & ACTIVE ? "active" : "inactive"}
+      data-visible={flags & VISIBLE ? "" : undefined}
+      data-passed={flags & PASSED ? "" : undefined}
       {...sectionProps}
       ref={composedRef}
     />

@@ -151,6 +151,48 @@ describe("scroll spy", () => {
     expect(getByTestId("section-c").dataset.visible).toBe("");
   });
 
+  it("finds sections that content above them moved", async () => {
+    const view = await renderStrict(<Doc />);
+    await scrollTo(170);
+    expect(activeLink()).toBe("b");
+    // Nothing that is observed changes size; the sections only move down.
+    await view.rerender(<Doc intro={200} />);
+    await scrollTo(175);
+    expect(activeLink()).toBe("a");
+    await scrollTo(360);
+    expect(activeLink()).toBe("b");
+  });
+
+  it("renders again only the links whose section a scroll changes", async () => {
+    const values = Array.from({ length: 500 }, (_, index) => `s${index}`);
+    const rendered = new Set<string>();
+    await renderStrict(
+      <ScrollSpy.Root>
+        <ScrollSpy.Nav aria-label="Sections">
+          <ScrollSpy.List>
+            {values.map(value => (
+              <ScrollSpy.Item key={value} value={value}>
+                <React.Profiler id={value} onRender={id => rendered.add(id)}>
+                  <ScrollSpy.Link>{value}</ScrollSpy.Link>
+                </React.Profiler>
+              </ScrollSpy.Item>
+            ))}
+          </ScrollSpy.List>
+        </ScrollSpy.Nav>
+        <div data-testid="scroller" style={{ height: 400, overflow: "auto" }}>
+          {values.map(value => <ScrollSpy.Section key={value} value={value} style={{ height: 100 }}>{value}</ScrollSpy.Section>)}
+        </div>
+      </ScrollSpy.Root>,
+    );
+    await scrollTo(20_000);
+    expect(activeLink()).toBe("s200");
+    rendered.clear();
+    // s200 is passed and goes out of view, s201 becomes active and s204 comes into view.
+    await scrollTo(20_100);
+    expect(activeLink()).toBe("s201");
+    expect([...rendered].sort()).toEqual(["s200", "s201", "s204"]);
+  });
+
   it("follows links natively and keeps the clicked section until the reader scrolls", async () => {
     await renderStrict(<Doc />);
     getByTestId("link-g").click();

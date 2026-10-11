@@ -1,8 +1,8 @@
 // @env browser
 import type { Rect } from "../shared/types";
-import type { SectionMeasurement } from "./types";
+import type { SectionGeometry } from "./types";
 import { getOwnerDocument, getOwnerWindow, getScrollParent } from "../shared/dom";
-import { ROOT_NAME, SECTION_NAME } from "./constants";
+import { GEOMETRY_TOLERANCE, ROOT_NAME, SECTION_NAME } from "./constants";
 
 function pixels(value: string, basis: number): number {
   const parsed = Number.parseFloat(value);
@@ -26,36 +26,51 @@ export function scrollerOf(sections: readonly HTMLElement[]): Element {
   return getScrollParent(first) ?? ownerDocument.scrollingElement ?? ownerDocument.documentElement;
 }
 
-/**
- * Measures the sections along the block axis. A section's position is the scroll position
- * that brings its start, less its scroll margin, to the top of the scrollport, less the
- * scroller's scroll padding: where scrolling it into view would land.
- */
-export function measureSections(scroller: Element, sections: readonly HTMLElement[]): SectionMeasurement {
-  const ownerWindow = getOwnerWindow(scroller);
+/** Where the scroller's content starts in the viewport: the top of its scrollport less how far it scrolled. */
+function contentOrigin(scroller: Element): number {
   const isDocument = scroller === scroller.ownerDocument.scrollingElement;
-  const scrollportSize = scroller.clientHeight;
   const scrollportTop = isDocument ? 0 : scroller.getBoundingClientRect().top + scroller.clientTop;
+  return scrollportTop - scroller.scrollTop;
+}
+
+/**
+ * Measures the sections along the block axis, in the scroller's content, where scrolling
+ * leaves them. A section's position is the scroll position that brings its start, less its
+ * scroll margin, to the top of the scrollport, less the scroller's scroll padding: where
+ * scrolling it into view would land.
+ */
+export function measureSections(scroller: Element, sections: readonly HTMLElement[]): SectionGeometry {
+  const ownerWindow = getOwnerWindow(scroller);
+  const scrollportSize = scroller.clientHeight;
   const paddingTop = pixels(ownerWindow.getComputedStyle(scroller).scrollPaddingTop, scrollportSize);
-  const scrollPosition = scroller.scrollTop;
+  const origin = contentOrigin(scroller);
+  const tops = new Float64Array(sections.length);
+  const bottoms = new Float64Array(sections.length);
   const positions: number[] = [];
-  const visible: boolean[] = [];
-  const passed: boolean[] = [];
-  for (const section of sections) {
+  sections.forEach((section, index) => {
     const rect = section.getBoundingClientRect();
-    const marginTop = pixels(ownerWindow.getComputedStyle(section).scrollMarginTop, 0);
-    positions.push(rect.top - marginTop - scrollportTop - paddingTop + scrollPosition);
-    visible.push(rect.bottom > scrollportTop && rect.top < scrollportTop + scrollportSize);
-    passed.push(rect.bottom <= scrollportTop + paddingTop);
+    tops[index] = rect.top - origin;
+    bottoms[index] = rect.bottom - origin;
+    positions.push(tops[index] - pixels(ownerWindow.getComputedStyle(section).scrollMarginTop, 0) - paddingTop);
+  });
+  return { tops, bottoms, positions, paddingTop, scrollportSize, scrollRange: scroller.scrollHeight - scrollportSize };
+}
+
+/**
+ * Whether the sections are where `geometry` has them. The sizes of the sections and their
+ * containers are observed; this catches what moves them without resizing those, like content
+ * above them that grows, by looking at the scroller and the first and last section only.
+ */
+export function sectionsStayed(scroller: Element, sections: readonly HTMLElement[], geometry: SectionGeometry): boolean {
+  if (scroller.clientHeight !== geometry.scrollportSize || scroller.scrollHeight - scroller.clientHeight !== geometry.scrollRange) {
+    return false;
   }
-  return {
-    positions,
-    scrollPosition,
-    scrollportSize,
-    scrollRange: scroller.scrollHeight - scrollportSize,
-    visible,
-    passed,
-  };
+  const origin = contentOrigin(scroller);
+  return [0, sections.length - 1].every((index) => {
+    const rect = sections[index]!.getBoundingClientRect();
+    return Math.abs(rect.top - origin - geometry.tops[index]!) <= GEOMETRY_TOLERANCE
+      && Math.abs(rect.bottom - origin - geometry.bottoms[index]!) <= GEOMETRY_TOLERANCE;
+  });
 }
 
 /** Where `element` sits in the content of `container`, which moves with its scrolling. */

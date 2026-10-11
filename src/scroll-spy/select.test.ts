@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { redistributePositions, selectSection } from "./select";
+import { preparePositions, redistributePositions, selectPrepared, selectSection } from "./select";
 
 describe("redistributePositions", () => {
   it("leaves positions alone when nothing scrolls", () => {
@@ -41,5 +41,42 @@ describe("selectSection", () => {
   it("finds nothing before the first section", () => {
     expect(selectSection([200, 600], 0, 300)).toBe(-1);
     expect(selectSection([], 0, 300)).toBe(-1);
+  });
+
+  it("selects as the rule reads, written out plainly, for random positions", () => {
+    // Every distinct position is looked at in turn, the way the specification describes it.
+    const reference = (positions: number[], scrollPosition: number, scrollportSize: number): number => {
+      const distinct = [...new Set(positions)].sort((a, b) => a - b);
+      let selected: number | undefined;
+      distinct.forEach((position, index) => {
+        const previous = distinct[index - 1];
+        const reached = position <= scrollPosition + 1;
+        const leads = previous !== undefined && previous < scrollPosition - scrollportSize / 2 && position < scrollPosition + scrollportSize / 2;
+        if (reached || leads) {
+          selected = position;
+        }
+      });
+      return selected === undefined ? -1 : positions.indexOf(selected);
+    };
+    let seed = 13;
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    for (let round = 0; round < 500; round++) {
+      const positions = Array.from({ length: Math.floor(random() * 30) }, () => Math.floor(random() * 40) * 50);
+      const scrollPosition = Math.floor(random() * 2200) - 100;
+      const scrollportSize = 100 + Math.floor(random() * 900);
+      expect(selectSection(positions, scrollPosition, scrollportSize)).toBe(reference(positions, scrollPosition, scrollportSize));
+    }
+  });
+
+  it("selects among a hundred thousand sections quickly", () => {
+    const positions = Array.from({ length: 100_000 }, (_, index) => index * 40);
+    const prepared = preparePositions(redistributePositions(positions, 800, 4_000_000 - 800));
+    const start = performance.now();
+    const selected = Array.from({ length: 1000 }, (_, frame) => selectPrepared(prepared, frame * 3000, 800));
+    expect(performance.now() - start).toBeLessThan(50);
+    expect(selected).toEqual(Array.from({ length: 1000 }, (_, frame) => Math.floor((frame * 3000 + 1) / 40)));
   });
 });

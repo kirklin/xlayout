@@ -1,3 +1,4 @@
+import type { Store } from "../shared/store";
 import * as React from "react";
 import { createRequiredContext } from "../shared/context";
 import { ITEM_NAME, NAV_NAME, ROOT_NAME } from "./constants";
@@ -13,12 +14,20 @@ export interface ItemEntry {
   parent: string | null;
 }
 
-export interface ScrollSpyContextValue {
+/**
+ * Where the reader is. The root keeps it in a store, and each section, item and link reads only
+ * its own part, so scrolling renders again only the ones it changes.
+ */
+export interface SpyState {
   active: string | null;
   visible: ReadonlySet<string>;
   passed: ReadonlySet<string>;
   /** The items the active item is nested in. */
   trail: ReadonlySet<string>;
+}
+
+export interface ScrollSpyContextValue {
+  state: Store<SpyState>;
   ariaCurrent: "true" | "location";
   registerSection: (entry: SectionEntry) => () => void;
   registerItem: (entry: ItemEntry) => () => void;
