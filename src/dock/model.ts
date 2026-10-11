@@ -1,20 +1,19 @@
 import type {
   DockAction,
   DockGroup,
+  DockGroupPlace,
   DockLayout,
+  DockLayoutInput,
   DockNode,
   DockOrientation,
-  DockRect,
   DockSide,
   DockSplit,
   DockTarget,
+  DockTreeInput,
 } from "./types";
 import { EDGE_SHARE, ROOT_NAME, SIZE_EPSILON } from "./constants";
 
 export const EMPTY_LAYOUT: DockLayout = { root: null, floating: [], popouts: [], maximized: null };
-
-/** Where a group lives. */
-export type GroupPlace = "main" | "floating" | "popout";
 
 type MakeId = (prefix: "group" | "split") => string;
 
@@ -49,7 +48,7 @@ export function findSplit(layout: DockLayout, id: string): DockSplit | undefined
   return splitsOf(layout.root).find(split => split.id === id);
 }
 
-export function placeOf(layout: DockLayout, groupId: string): GroupPlace | undefined {
+export function placeOf(layout: DockLayout, groupId: string): DockGroupPlace | undefined {
   if (mainGroups(layout.root).some(group => group.id === groupId)) {
     return "main";
   }
@@ -371,25 +370,6 @@ export function dockReducer(layout: DockLayout, action: DockAction): DockLayout 
     }
   }
   return normalizeLayout(next);
-}
-
-export interface DockGroupInput {
-  panels: string[];
-  active?: string;
-}
-
-export interface DockSplitInput {
-  orientation: DockOrientation;
-  children: DockTreeInput[];
-  sizes?: number[];
-}
-
-/** A tree to build a layout from, without ids. */
-export type DockTreeInput = DockGroupInput | DockSplitInput;
-
-export interface DockLayoutInput {
-  root?: DockTreeInput | null;
-  floating?: { panels: string[]; active?: string; rect: DockRect }[];
 }
 
 /** Builds a layout without writing ids or histories by hand. */

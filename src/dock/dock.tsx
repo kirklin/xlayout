@@ -12,8 +12,7 @@ import type {
   GroupElements,
 } from "./context";
 import type { Popout } from "./hosts";
-import type { GroupPlace } from "./model";
-import type { DockAction, DockFloating, DockGroup, DockLayout, DockNode, DockPopout, DockRect, DockSide, DockSplit } from "./types";
+import type { DockAction, DockFloating, DockGroup, DockGroupPlace, DockLayout, DockNode, DockPopout, DockRect, DockSide, DockSplit } from "./types";
 import type { DockGeometry, DropZone, GroupGeometry } from "./zones";
 import * as React from "react";
 import { createPortal } from "react-dom";
@@ -408,7 +407,7 @@ function Dock(props: DockProps): React.ReactNode {
   const geometryOf = (exclude: string | null): DockGeometry => {
     const current = layoutRef.current;
     const rootRect = root!.getBoundingClientRect();
-    const describe = (group: DockGroup, place: GroupPlace): GroupGeometry[] => {
+    const describe = (group: DockGroup, place: DockGroupPlace): GroupGeometry[] => {
       const elements = groupElementsRef.current.get(group.id);
       if (!elements || group.id === exclude || elements.group.ownerDocument !== root!.ownerDocument) {
         return [];
@@ -882,7 +881,7 @@ function SplitHandle({ split, index, sizes }: { split: DockSplit; index: number;
   );
 }
 
-function GroupView({ group, place }: { group: DockGroup; place: GroupPlace }): React.ReactNode {
+function GroupView({ group, place }: { group: DockGroup; place: DockGroupPlace }): React.ReactNode {
   const context = useDockContext(ROOT_NAME);
   const groupRef = React.useRef<HTMLDivElement>(null);
   const tabBarRef = React.useRef<HTMLDivElement>(null);

@@ -1,6 +1,5 @@
 import type * as React from "react";
-import type { GroupPlace } from "./model";
-import type { DockAction, DockFloating, DockGroup, DockLayout, DockRect, DockSplit, DockTarget } from "./types";
+import type { DockAction, DockFloating, DockGroup, DockGroupPlace, DockLayout, DockRect, DockSplit, DockTarget } from "./types";
 import type { DropZone } from "./zones";
 import { createRequiredContext } from "../shared/context";
 import { ROOT_NAME } from "./constants";
@@ -48,7 +47,7 @@ export interface DockTabRenderProps {
 
 export interface DockGroupRenderProps {
   group: string;
-  place: GroupPlace;
+  place: DockGroupPlace;
   panels: readonly string[];
   active: string;
   maximized: boolean;

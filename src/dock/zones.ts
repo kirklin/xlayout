@@ -1,11 +1,10 @@
 import type { Point } from "../shared/types";
-import type { GroupPlace } from "./model";
-import type { DockRect, DockSide, DockTarget } from "./types";
+import type { DockGroupPlace, DockRect, DockSide, DockTarget } from "./types";
 import { CONTENT_EDGE_SHARE, EDGE_SHARE, SURFACE_EDGE_INSIDE, SURFACE_EDGE_OUTSIDE } from "./constants";
 
 export interface GroupGeometry {
   id: string;
-  place: GroupPlace;
+  place: DockGroupPlace;
   rect: DockRect;
   tabBar: DockRect;
   content: DockRect;

@@ -58,6 +58,32 @@ export interface DockLayout {
   maximized: string | null;
 }
 
+/** Where a group lives. */
+export type DockGroupPlace = "main" | "floating" | "popout";
+
+export interface DockGroupInput {
+  panels: string[];
+  active?: string;
+}
+
+export interface DockSplitInput {
+  orientation: DockOrientation;
+  children: DockTreeInput[];
+  sizes?: number[];
+}
+
+/** A tree to build a layout from, without ids. */
+export type DockTreeInput = DockGroupInput | DockSplitInput;
+
+export interface DockFloatingInput extends DockGroupInput {
+  rect: DockRect;
+}
+
+export interface DockLayoutInput {
+  root?: DockTreeInput | null;
+  floating?: DockFloatingInput[];
+}
+
 /** Among the tabs of a group, before the tab at `index`, or last. */
 export interface DockGroupTarget {
   type: "group";
