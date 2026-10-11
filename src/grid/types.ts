@@ -41,11 +41,21 @@ export interface GridRules {
   collision: GridCollision;
 }
 
-export type GridChangeReason = "move" | "resize";
+/**
+ * The side or corner of an item a resize handle moves; the opposite one stays. The inline sides
+ * follow the reading direction.
+ */
+export type GridEdge = "top" | "bottom" | "start" | "end" | "top-start" | "top-end" | "bottom-start" | "bottom-end";
+
+/**
+ * Why the layouts changed: an item moved or was resized, an item dragged out was taken by another
+ * grid of the same group, or arrived from one, or was dragged out of a removable grid.
+ */
+export type GridChangeReason = "move" | "resize" | "add" | "remove";
 
 export interface GridLayoutChange {
   breakpoint: string;
-  /** The item that moved or was resized. */
+  /** The item that moved, was resized, arrived or left. */
   value: string;
   reason: GridChangeReason;
 }

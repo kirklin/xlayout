@@ -85,6 +85,24 @@ describe("grid layout", () => {
     expect(places(resolveResize(snapshot, "a", { w: 3, h: 2 }, { ...PUSH, collision: "block" }))).toEqual(["blocked"]);
   });
 
+  it("resizes from any edge or corner, keeping the opposite one and the grid's bounds", () => {
+    const snapshot = [item("a", 4, 2, 2, 2, { minW: 1, maxW: 5 }), item("b", 0, 0, 2, 1)];
+    const none = { ...PUSH, compact: "none" } as const;
+    // From the start the item grows toward the inline start, its end staying at column 6.
+    expect(places(resolveResize(snapshot, "a", { w: 4, h: 9 }, none, "start"))).toEqual(["a 2,2 4x2", "b 0,0 2x1"]);
+    expect(places(resolveResize(snapshot, "a", { w: 9, h: 2 }, none, "start"))).toEqual(["a 1,2 5x2", "b 0,0 2x1"]);
+    // From the top it grows up to the first row at most, its bottom staying at row 4.
+    expect(places(resolveResize(snapshot, "a", { w: 9, h: 3 }, none, "top"))).toEqual(["a 4,1 2x3", "b 0,0 2x1"]);
+    expect(places(resolveResize(snapshot, "a", { w: 2, h: 9 }, none, "top"))).toEqual(["a 4,0 2x4", "b 0,0 2x1"]);
+    expect(places(resolveResize(snapshot, "a", { w: 3, h: 3 }, none, "top-start"))).toEqual(["a 3,1 3x3", "b 0,0 2x1"]);
+    expect(places(resolveResize(snapshot, "a", { w: 3, h: 3 }, none, "bottom-start"))).toEqual(["a 3,2 3x3", "b 0,0 2x1"]);
+    expect(places(resolveResize(snapshot, "a", { w: 3, h: 3 }, none, "top-end"))).toEqual(["a 4,1 3x3", "b 0,0 2x1"]);
+    expect(places(resolveResize(snapshot, "a", { w: 1, h: 1 }, none, "end"))).toEqual(["a 4,2 1x2", "b 0,0 2x1"]);
+    // Growing into another item from the start pushes it out of the way.
+    const crowded = [item("a", 2, 0, 2, 1), item("b", 0, 0, 2, 1)];
+    expect(places(resolveResize(crowded, "a", { w: 4, h: 1 }, PUSH, "start"))).toEqual(["a 0,0 4x1", "b 0,1 2x1"]);
+  });
+
   it("scales or clamps a layout for another number of columns", () => {
     const layout = [item("a", 0, 0, 4, 2), item("b", 4, 0, 8, 2)];
     expect(places(deriveLayout(layout, 12, 6, "scale"))).toEqual(["a 0,0 2x2", "b 2,0 4x2"]);

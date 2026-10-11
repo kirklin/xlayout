@@ -1,7 +1,7 @@
 import type { GridDrop, GridItemLayout, GridLayoutChange, GridLayouts, GridProps } from "./index";
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { userEvent } from "vitest/browser";
+import { commands, userEvent } from "vitest/browser";
 import { drag, nextFrames, releasePointer } from "../../test/pointer";
 import { getByTestId, renderError, renderStrict } from "../../test/render";
 import * as Grid from "./index";
@@ -236,13 +236,13 @@ describe("grid", () => {
     const onDropItem = (drop: GridDrop): void => {
       drops.push(drop);
     };
-    await renderStrict(<Board onDropItem={onDropItem} />);
+    await renderStrict(<Board onDropItem={onDropItem} style={{ minHeight: 200 }} />);
     const rect = canvas().getBoundingClientRect();
-    const dragEvent = (type: string): DragEvent => new DragEvent(type, {
+    const dragEvent = (type: string, below = 0): DragEvent => new DragEvent(type, {
       bubbles: true,
       cancelable: true,
       clientX: rect.left + 50,
-      clientY: rect.top + 25,
+      clientY: rect.top + 25 + below,
       dataTransfer: new DataTransfer(),
     });
     const over = dragEvent("dragover");
@@ -259,6 +259,13 @@ describe("grid", () => {
       layout: [{ value: "a", x: 0, y: 1, w: 1, h: 1 }, { value: "b", x: 1, y: 0, w: 1, h: 1 }, { value: "c", x: 2, y: 0, w: 1, h: 1 }],
     }]);
     expect(getByTestId("grid").dataset.state).toBe("idle");
+
+    // Below its only row, on its own box, the grid takes the item too and puts it under the others.
+    const below = dragEvent("dragover", 120);
+    getByTestId("grid").dispatchEvent(below);
+    expect(below.defaultPrevented).toBe(true);
+    await nextFrames();
+    expect(boxOf("placeholder")).toMatchObject({ x: 0, y: 60 });
   });
 
   it("scrolls its scroll container while a drag holds near the edge", async () => {
@@ -283,5 +290,262 @@ describe("grid", () => {
     expect(duplicate.message).toContain("already has an item with the value \"a\"");
     const unknown = await renderError(<Board defaultLayouts={{ wide: LAYOUT }} />);
     expect(unknown.message).toContain("layout for \"wide\", which is not one of its breakpoints");
+  });
+
+  describe("resizing from any edge", () => {
+    function EdgeBoard(props: Partial<GridProps> & { edge: Grid.GridEdge }): React.ReactNode {
+      const { edge, ...gridProps } = props;
+      return (
+        <Grid.Root data-testid="grid" columns={4} rowHeight={50} gap={10} style={{ width: 430 }} {...gridProps}>
+          {["a", "b"].map(value => (
+            <Grid.Item key={value} value={value} label={`Card ${value}`} data-testid={value} style={{ position: "relative" }}>
+              <Grid.ResizeHandle data-testid={`${value}-resize`} edge={edge} aria-label={`Resize card ${value}`} style={{ position: "absolute", inset: 0, margin: "auto", width: 12, height: 12, padding: 0 }} />
+            </Grid.Item>
+          ))}
+          <Grid.Placeholder data-testid="placeholder" />
+        </Grid.Root>
+      );
+    }
+
+    it("grows toward the start, keeping the end, and pushes what is in the way", async () => {
+      const onLayoutsChange = vi.fn<(layouts: GridLayouts, change: GridLayoutChange) => void>();
+      const layout = [{ value: "a", x: 0, y: 0, w: 1, h: 1 }, { value: "b", x: 2, y: 0, w: 1, h: 1 }];
+      await renderStrict(<EdgeBoard edge="start" defaultLayouts={{ base: layout }} onLayoutsChange={onLayoutsChange} />);
+      expect(getByTestId("b-resize").dataset.edge).toBe("start");
+      await drag(getByTestId("b-resize"), -220, 0, { release: false });
+      await nextFrames();
+      expect(getComputedStyle(document.body).cursor).toBe("ew-resize");
+      expect(boxOf("placeholder")).toMatchObject({ x: 0, y: 0, width: 320 });
+      // The item is drawn from where the pointer has its start edge to its own end.
+      expect(boxOf("b")).toMatchObject({ x: 0, width: 320 });
+      await releasePointer();
+      expect(cells(onLayoutsChange.mock.lastCall![0])).toEqual(["a 0,1 1x1", "b 0,0 3x1"]);
+      expect(onLayoutsChange.mock.lastCall![1]).toEqual({ breakpoint: "base", value: "b", reason: "resize" });
+    });
+
+    it("grows up from the top and from a corner, within the grid", async () => {
+      const onLayoutsChange = vi.fn<(layouts: GridLayouts, change: GridLayoutChange) => void>();
+      const layout = [{ value: "a", x: 0, y: 0, w: 1, h: 1, static: true }, { value: "b", x: 2, y: 2, w: 1, h: 1 }];
+      const view = await renderStrict(<EdgeBoard edge="top" compact="none" defaultLayouts={{ base: layout }} onLayoutsChange={onLayoutsChange} />);
+      await drag(getByTestId("b-resize"), 0, -110);
+      expect(cells(onLayoutsChange.mock.lastCall![0])).toEqual(["a 0,0 1x1", "b 2,0 1x3"]);
+      await view.rerender(<EdgeBoard key="corner" edge="top-start" compact="none" defaultLayouts={{ base: layout }} onLayoutsChange={onLayoutsChange} />);
+      await drag(getByTestId("b-resize"), -110, -60);
+      expect(cells(onLayoutsChange.mock.lastCall![0])).toEqual(["a 0,0 1x1", "b 1,1 2x2"]);
+    });
+
+    it("moves its own sides with the arrow keys and leaves the other axis alone", async () => {
+      const onLayoutsChange = vi.fn<(layouts: GridLayouts, change: GridLayoutChange) => void>();
+      const layout = [{ value: "a", x: 0, y: 1, w: 1, h: 1 }, { value: "b", x: 2, y: 1, w: 1, h: 1 }];
+      await renderStrict(<EdgeBoard edge="start" compact="none" defaultLayouts={{ base: layout }} onLayoutsChange={onLayoutsChange} />);
+      getByTestId("b-resize").focus();
+      await userEvent.keyboard(" ");
+      await userEvent.keyboard("{ArrowLeft}");
+      expect(announcements()).toContain("Card b resized to 2 columns by 1 rows.");
+      await userEvent.keyboard("{ArrowUp}");
+      expect(announcements()).toContain("Card b cannot go further that way.");
+      await userEvent.keyboard("{Enter}");
+      expect(cells(onLayoutsChange.mock.lastCall![0])).toEqual(["a 0,1 1x1", "b 1,1 2x1"]);
+    });
+  });
+
+  describe("removing", () => {
+    it("takes an item dragged out of a removable grid out of every layout", async () => {
+      const onLayoutsChange = vi.fn<(layouts: GridLayouts, change: GridLayoutChange) => void>();
+      const layouts = {
+        wide: [{ value: "a", x: 0, y: 0, w: 1, h: 1 }, { value: "b", x: 0, y: 1, w: 1, h: 1 }, { value: "c", x: 2, y: 0, w: 1, h: 1 }],
+        base: [{ value: "a", x: 0, y: 0, w: 1, h: 1 }, { value: "b", x: 0, y: 1, w: 1, h: 1 }, { value: "c", x: 0, y: 2, w: 1, h: 1 }],
+      };
+      await renderStrict(<Board removable breakpoints={{ wide: 400, base: 0 }} defaultLayouts={layouts} onLayoutsChange={onLayoutsChange} />);
+      expect(getByTestId("grid").dataset.breakpoint).toBe("wide");
+      await drag(getByTestId("a-move"), 0, 300, { release: false });
+      await settle();
+      expect(getByTestId("grid").dataset.state).toBe("removing");
+      expect(getByTestId("a").dataset.leaving).toBe("");
+      expect(document.querySelector("[data-testid=placeholder]")).toBeNull();
+      // The others close the gap the item leaves while it is away.
+      expect(boxOf("b")).toMatchObject({ x: 0, y: 0 });
+      await releasePointer();
+      expect(onLayoutsChange).toHaveBeenCalledOnce();
+      const [next, change] = onLayoutsChange.mock.lastCall!;
+      expect(change).toEqual({ breakpoint: "wide", value: "a", reason: "remove" });
+      expect(cells(next, "wide")).toEqual(["b 0,0 1x1", "c 2,0 1x1"]);
+      expect(cells(next, "base")).toEqual(["b 0,1 1x1", "c 0,2 1x1"]);
+    });
+
+    it("keeps items dragged out of a grid that is not removable", async () => {
+      const onLayoutsChange = vi.fn<(layouts: GridLayouts, change: GridLayoutChange) => void>();
+      await renderStrict(<Board onLayoutsChange={onLayoutsChange} />);
+      await drag(getByTestId("a-move"), 0, 200, { release: false });
+      await nextFrames();
+      expect(getByTestId("grid").dataset.state).toBe("dragging");
+      expect(getByTestId("a").dataset.leaving).toBeUndefined();
+      await releasePointer();
+      expect(onLayoutsChange.mock.lastCall?.[1].reason).not.toBe("remove");
+    });
+
+    it("removes the item picked up with Delete, and from code", async () => {
+      const onLayoutsChange = vi.fn<(layouts: GridLayouts, change: GridLayoutChange) => void>();
+      function Remover(): React.ReactNode {
+        const item = Grid.useGridItem();
+        return <button type="button" data-testid={`${item.value}-remove`} onClick={() => item.remove()}>Remove</button>;
+      }
+      await renderStrict(<Board removable extra={<Remover />} onLayoutsChange={onLayoutsChange} />);
+      getByTestId("b-move").focus();
+      await userEvent.keyboard(" ");
+      expect(announcements()).toContain("Delete removes it");
+      await userEvent.keyboard("{Delete}");
+      expect(onLayoutsChange.mock.lastCall![1]).toEqual({ breakpoint: "base", value: "b", reason: "remove" });
+      expect(announcements()).toContain("Card b removed.");
+      getByTestId("c-remove").click();
+      expect(onLayoutsChange.mock.lastCall![1]).toEqual({ breakpoint: "base", value: "c", reason: "remove" });
+    });
+  });
+
+  describe("moving between grids of a group", () => {
+    type Board = "left" | "right";
+    interface BoardsProps {
+      onChange?: (board: Board, change: GridLayoutChange) => void;
+      removable?: boolean;
+      /** The style of each board, whose box may reach below its rows. */
+      style?: React.CSSProperties;
+    }
+    function Boards({ onChange, removable, style }: BoardsProps): React.ReactNode {
+      const [cards, setCards] = React.useState<Record<Board, string[]>>({ left: ["a", "b"], right: ["c"] });
+      const [layouts, setLayouts] = React.useState<Record<Board, GridLayouts>>({
+        left: { base: [{ value: "a", x: 0, y: 0, w: 1, h: 1 }, { value: "b", x: 1, y: 0, w: 2, h: 1 }] },
+        right: { base: [{ value: "c", x: 0, y: 0, w: 1, h: 1 }] },
+      });
+      return (
+        <div style={{ display: "flex", gap: 40, alignItems: "start" }}>
+          {(["left", "right"] as const).map(board => (
+            <Grid.Root
+              key={board}
+              data-testid={board}
+              aria-label={`the ${board} board`}
+              group="boards"
+              removable={removable}
+              columns={4}
+              rowHeight={50}
+              gap={10}
+              style={{ width: 430, ...style }}
+              layouts={layouts[board]}
+              onLayoutsChange={(next, change) => {
+                setLayouts(current => ({ ...current, [board]: next }));
+                if (change.reason === "remove") {
+                  setCards(current => ({ ...current, [board]: current[board].filter(value => value !== change.value) }));
+                } else if (change.reason === "add") {
+                  setCards(current => ({ ...current, [board]: [...current[board], change.value] }));
+                }
+                onChange?.(board, change);
+              }}
+            >
+              {cards[board].map(value => (
+                <Grid.Item key={value} value={value} label={`Card ${value}`} data-testid={value}>
+                  <Grid.DragHandle data-testid={`${value}-move`} aria-label={`Move card ${value}`} style={{ display: "block", width: 20, height: 20, padding: 0 }} />
+                </Grid.Item>
+              ))}
+              <Grid.Placeholder data-testid={`${board}-placeholder`} />
+            </Grid.Root>
+          ))}
+        </div>
+      );
+    }
+
+    const canvasOf = (board: string): DOMRect => getByTestId(board).querySelector("[data-xlayout-grid-canvas]")!.getBoundingClientRect();
+    const boardOf = (value: string): string | undefined => getByTestId(value).closest<HTMLElement>("[data-xlayout-grid]")?.dataset.testid;
+
+    it("hands an item dragged over another grid to it, which shows where it lands", async () => {
+      const onChange = vi.fn<(board: Board, change: GridLayoutChange) => void>();
+      await renderStrict(<Boards onChange={onChange} />);
+      const handle = getByTestId("b-move").getBoundingClientRect();
+      const right = canvasOf("right");
+      // The handle sits at the item's top left corner, so the item's corner goes to column 2 of the right board.
+      await drag(getByTestId("b-move"), right.left + 220 + 10 - (handle.left + 10), right.top + 10 - (handle.top + 10), { release: false, steps: 12 });
+      await nextFrames();
+      expect(getByTestId("left").dataset.state).toBe("dragging");
+      expect(getByTestId("b").dataset.leaving).toBe("");
+      expect(getByTestId("right").dataset.state).toBe("dropping");
+      const placeholder = getByTestId("right-placeholder").getBoundingClientRect();
+      expect(placeholder.left - right.left).toBeCloseTo(220, 0);
+      expect(placeholder.width).toBeCloseTo(210, 0);
+      await releasePointer();
+      await nextFrames();
+      expect(onChange.mock.calls.map(([board, change]) => `${board} ${change.reason} ${change.value}`)).toEqual(["right add b", "left remove b"]);
+      expect(boardOf("b")).toBe("right");
+      expect(getByTestId("b").getBoundingClientRect().left - right.left).toBeCloseTo(220, 0);
+      expect(getByTestId("right").dataset.state).toBe("idle");
+    });
+
+    it("takes items dropped anywhere on its box, below its rows too", async () => {
+      const onChange = vi.fn<(board: Board, change: GridLayoutChange) => void>();
+      await renderStrict(<Boards onChange={onChange} removable style={{ minHeight: 300, padding: 10 }} />);
+      const changes = (): string[] => onChange.mock.calls.map(([board, change]) => `${board} ${change.reason} ${change.value}`);
+      // Below the only row of the left board, yet on it: the item stays in it.
+      const left = getByTestId("left").getBoundingClientRect();
+      const b = getByTestId("b-move").getBoundingClientRect();
+      await drag(getByTestId("b-move"), 0, left.bottom - 30 - (b.top + 10), { release: false, steps: 6 });
+      await nextFrames();
+      expect(getByTestId("left").dataset.state).toBe("dragging");
+      await releasePointer();
+      await settle();
+      expect(boardOf("b")).toBe("left");
+      expect(changes()).toEqual([]);
+
+      // Below the only row of the right board, the item goes over to it.
+      const right = getByTestId("right").getBoundingClientRect();
+      const a = getByTestId("a-move").getBoundingClientRect();
+      await drag(getByTestId("a-move"), right.left + 40 - (a.left + 10), right.bottom - 30 - (a.top + 10), { release: false, steps: 12 });
+      await nextFrames();
+      expect(getByTestId("left").dataset.state).toBe("dragging");
+      expect(getByTestId("right").dataset.state).toBe("dropping");
+      await releasePointer();
+      await settle();
+      expect(boardOf("a")).toBe("right");
+      expect(changes()).toEqual(["right add a", "left remove a"]);
+    });
+
+    it("lets go of the other grid when the drag turns back", async () => {
+      const onChange = vi.fn<(board: Board, change: GridLayoutChange) => void>();
+      await renderStrict(<Boards onChange={onChange} />);
+      const handle = getByTestId("a-move").getBoundingClientRect();
+      const right = canvasOf("right");
+      await drag(getByTestId("a-move"), right.left + 120 - handle.left, 10, { release: false, steps: 10 });
+      await nextFrames();
+      expect(getByTestId("right").dataset.state).toBe("dropping");
+      await drag(getByTestId("a-move"), 0, 0, { release: false, steps: 1 });
+      const left = canvasOf("left");
+      await commands.pointer([{ type: "move", x: left.left + 340, y: left.top + 10, steps: 10 }]);
+      await nextFrames();
+      expect(getByTestId("right").dataset.state).toBe("idle");
+      expect(document.querySelector("[data-testid=right-placeholder]")).toBeNull();
+      await releasePointer();
+      expect(onChange.mock.calls.map(([board, change]) => `${board} ${change.reason}`)).toEqual(["left move"]);
+      expect(boardOf("a")).toBe("left");
+    });
+
+    it("moves an item past the edge into the next grid with the keyboard and keeps focus on it", async () => {
+      const onChange = vi.fn<(board: Board, change: GridLayoutChange) => void>();
+      await renderStrict(<Boards onChange={onChange} />);
+      getByTestId("b-move").focus();
+      await userEvent.keyboard(" ");
+      await userEvent.keyboard("{ArrowRight}");
+      expect(announcements()).toContain("Card b moved to column 3, row 1.");
+      await userEvent.keyboard("{ArrowRight}");
+      expect(announcements()).toContain("Card b moved to the right board, column 1, row 1.");
+      expect(getByTestId("right").dataset.state).toBe("dropping");
+      await userEvent.keyboard("{ArrowRight}");
+      expect(announcements()).toContain("Card b moved to column 2, row 1.");
+      await userEvent.keyboard("{ArrowLeft}{ArrowLeft}");
+      expect(announcements()).toContain("Card b moved back to column 3, row 1.");
+      expect(getByTestId("right").dataset.state).toBe("idle");
+      await userEvent.keyboard("{ArrowRight}");
+      await userEvent.keyboard("{Enter}");
+      await nextFrames();
+      expect(onChange.mock.calls.map(([board, change]) => `${board} ${change.reason} ${change.value}`)).toEqual(["right add b", "left remove b"]);
+      expect(boardOf("b")).toBe("right");
+      expect(document.activeElement).toBe(getByTestId("b-move"));
+      expect(announcements()).toContain("Card b dropped in the right board at column 1, row 1.");
+    });
   });
 });

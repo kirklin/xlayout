@@ -1,4 +1,4 @@
-import type { GridCell, GridCompaction, GridDerivation, GridItemLayout, GridLayout, GridRules } from "./types";
+import type { GridCell, GridCompaction, GridDerivation, GridEdge, GridItemLayout, GridLayout, GridRules } from "./types";
 import { clamp } from "../shared/math";
 
 export function collides(a: GridCell, b: GridCell): boolean {
@@ -176,8 +176,25 @@ export function resolveMove(
   return pushAround(place([moved, ...others]), value, rules);
 }
 
-/** The layout after resizing an item, worked out from the layout when the resize began. */
-export function resolveResize(snapshot: GridLayout, value: string, size: { w: number; h: number }, rules: GridRules): GridItemLayout[] | null {
+/** Which sides an edge moves along each axis: `-1` the start or the top, `1` the end or the bottom, `0` neither. */
+export function edgeSides(edge: GridEdge): { x: -1 | 0 | 1; y: -1 | 0 | 1 } {
+  return {
+    x: edge.endsWith("start") ? -1 : edge.endsWith("end") ? 1 : 0,
+    y: edge.startsWith("top") ? -1 : edge.startsWith("bottom") ? 1 : 0,
+  };
+}
+
+/**
+ * The layout after resizing an item from `edge` toward `size`, worked out from the layout when
+ * the resize began. The opposite edge stays, and the grid's bounds and the item's limits hold.
+ */
+export function resolveResize(
+  snapshot: GridLayout,
+  value: string,
+  size: { w: number; h: number },
+  rules: GridRules,
+  edge: GridEdge = "bottom-end",
+): GridItemLayout[] | null {
   const origin = snapshot.find(item => item.value === value);
   if (!origin) {
     throw new Error(`The grid layout has no item "${value}".`);
@@ -185,12 +202,18 @@ export function resolveResize(snapshot: GridLayout, value: string, size: { w: nu
   if (origin.static) {
     return null;
   }
-  // The item grows from its far corner, so its position stays and the grid's width limits it.
-  const resized = {
-    ...origin,
-    w: clamp(size.w, Math.max(1, origin.minW ?? 1), Math.min(origin.maxW ?? Infinity, rules.columns - origin.x)),
-    h: Math.max(1, clamp(size.h, origin.minH ?? 1, origin.maxH ?? Infinity)),
-  };
+  const sides = edgeSides(edge);
+  const end = origin.x + origin.w;
+  const bottom = origin.y + origin.h;
+  const minW = Math.max(1, origin.minW ?? 1);
+  const minH = Math.max(1, origin.minH ?? 1);
+  const w = sides.x === 0
+    ? origin.w
+    : clamp(size.w, minW, Math.min(origin.maxW ?? Infinity, sides.x < 0 ? end : rules.columns - origin.x));
+  const h = sides.y === 0
+    ? origin.h
+    : Math.max(1, clamp(size.h, minH, Math.min(origin.maxH ?? Infinity, sides.y < 0 ? bottom : Infinity)));
+  const resized = { ...origin, w, h, x: sides.x < 0 ? end - w : origin.x, y: sides.y < 0 ? bottom - h : origin.y };
   const others = snapshot.filter(item => item.value !== value);
   const colliders = others.filter(item => collides(resized, item));
   const layout = inOrder(snapshot, new Map([resized, ...others].map(item => [item.value, item])));

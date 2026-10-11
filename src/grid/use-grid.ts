@@ -35,15 +35,21 @@ export interface GridItemApi {
   move: (direction: GridMove) => boolean;
   /** Resizes the item a step; returns whether its size changed. */
   resize: (change: GridResize) => boolean;
+  /**
+   * Takes the item out of the layouts and reports the change with the reason `"remove"`; render
+   * the item no more to remove it. Returns whether the grid had placed it.
+   */
+  remove: () => boolean;
 }
 
-/** The state of the nearest `Grid.Item`, and ways to move or resize it without dragging. */
+/** The state of the nearest `Grid.Item`, and ways to move, resize or remove it without dragging. */
 export function useGridItem(): GridItemApi {
-  const { layout, itemView, step } = useGridContext("useGridItem");
+  const { layout, itemView, step, remove: removeItem } = useGridContext("useGridItem");
   const { value } = useGridItemContext("useGridItem");
   const { state } = itemView(value);
   const move = React.useCallback((direction: GridMove) => step("move", value, MOVES[direction]), [step, value]);
   const resize = React.useCallback((change: GridResize) => step("resize", value, RESIZES[change]), [step, value]);
+  const remove = React.useCallback(() => removeItem(value), [removeItem, value]);
   const cell = layout?.find(item => item.value === value) ?? null;
   return React.useMemo(() => ({
     value,
@@ -52,5 +58,6 @@ export function useGridItem(): GridItemApi {
     isResizing: state === "resizing",
     move,
     resize,
-  }), [value, cell, state, move, resize]);
+    remove,
+  }), [value, cell, state, move, resize, remove]);
 }

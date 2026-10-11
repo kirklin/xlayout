@@ -24,6 +24,7 @@ export type {
   GridCollision,
   GridCompaction,
   GridDerivation,
+  GridEdge,
   GridItemLayout,
   GridLayout,
   GridLayoutChange,
