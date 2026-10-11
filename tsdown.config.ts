@@ -6,6 +6,7 @@ export default defineConfig({
     overflow: "src/overflow/index.ts",
     shell: "src/shell/index.ts",
     splitter: "src/splitter/index.ts",
+    sticky: "src/sticky/index.ts",
   },
   format: ["esm"],
   platform: "neutral",

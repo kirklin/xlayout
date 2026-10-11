@@ -36,6 +36,7 @@
     "./overflow": "./dist/overflow.js",
     "./shell": "./dist/shell.js",
     "./splitter": "./dist/splitter.js",
+    "./sticky": "./dist/sticky.js",
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.ts",

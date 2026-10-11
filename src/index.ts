@@ -3,3 +3,4 @@
 export * as Overflow from "xlayout/overflow";
 export * as Shell from "xlayout/shell";
 export * as Splitter from "xlayout/splitter";
+export * as Sticky from "xlayout/sticky";
