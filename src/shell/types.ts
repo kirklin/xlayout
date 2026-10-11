@@ -25,7 +25,7 @@ export interface PersistedSidebar {
 /** Persisted state of every sidebar, keyed by sidebar id. */
 export type ShellState = Record<string, PersistedSidebar>;
 
-/** Persists sidebar state. `localStorage`, `sessionStorage` and `createCookieStorage()` satisfy it. */
+/** Persists sidebar state. `localStorage` and `sessionStorage` satisfy it. */
 export interface ShellStorage {
   getItem: (key: string) => string | null;
   setItem: (key: string, value: string) => void;
