@@ -1,7 +1,7 @@
 {
   "name": "xlayout",
   "type": "module",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "packageManager": "pnpm@12.11.2",
   "description": "Headless, accessible layout primitives for React",
   "author": "Kirk Lin <https://github.com/kirklin>",
