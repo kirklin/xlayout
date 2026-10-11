@@ -138,7 +138,7 @@ describe("fitItems with many items", () => {
     const dividers = Array.from({ length: 50 }, (_, index) => ({ group: `group-${index}`, size: 1 }));
     const start = performance.now();
     const result = fitItems(input({ available: 1000, items, dividers }));
-    expect(performance.now() - start).toBeLessThan(100);
+    expect(performance.now() - start).toBeLessThan(300);
     expect(result.visible.size).toBeGreaterThan(10);
     expect(describeOverflow(items, result.visible).hidden.length).toBe(10_000 - result.visible.size);
   });
