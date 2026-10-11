@@ -305,7 +305,8 @@ describe("dock", () => {
     const view = await renderStrict(<Workbench panels={panels} layout={layout("file-0")} style={style} />);
     const bar = (): HTMLElement => document.querySelector<HTMLElement>("[role=tablist]")!;
     const contentRect = (): DOMRect => rectOf(document.querySelector("[data-dock-content]")!);
-    const inBar = (panel: string): boolean => rectOf(tab(panel)).left >= rectOf(bar()).left - 0.5 && rectOf(tab(panel)).right <= rectOf(bar()).right + 0.5;
+    // Tabs are fractions of a pixel wide while some engines scroll in whole pixels.
+    const inBar = (panel: string): boolean => rectOf(tab(panel)).left > rectOf(bar()).left - 1 && rectOf(tab(panel)).right < rectOf(bar()).right + 1;
     expect(bar().scrollWidth).toBeGreaterThan(bar().clientWidth);
     expect(rectOf(bar()).right).toBeLessThanOrEqual(rectOf(document.querySelector("[data-dock-controls]")!).left);
     expect(inBar("file-6")).toBe(false);
@@ -316,6 +317,7 @@ describe("dock", () => {
     tab("file-0").focus();
     await userEvent.keyboard("{End}");
     expect(document.activeElement).toBe(tab("file-7"));
+    expect(bar().scrollWidth - bar().clientWidth - bar().scrollLeft).toBeLessThan(1);
     expect(inBar("file-7")).toBe(true);
     expect(getByTestId("dock").scrollLeft).toBe(0);
     expect(contentRect()).toMatchObject({ left: content.left, top: content.top });

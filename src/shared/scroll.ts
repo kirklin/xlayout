@@ -81,8 +81,11 @@ export function revealWithin(element: Element, boundary: Element): void {
     }
     return end > portStart + portSize ? end - (portStart + portSize) : 0;
   };
-  const top = distance(rect.top, rect.bottom, containerRect.top + container.clientTop, container.clientHeight);
-  const left = distance(rect.left, rect.right, containerRect.left + container.clientLeft, container.clientWidth);
+  // Some engines keep scroll positions in whole pixels, so a fraction is rounded away from zero
+  // to show all of the element.
+  const outward = (value: number): number => (value > 0 ? Math.ceil(value) : Math.floor(value));
+  const top = outward(distance(rect.top, rect.bottom, containerRect.top + container.clientTop, container.clientHeight));
+  const left = outward(distance(rect.left, rect.right, containerRect.left + container.clientLeft, container.clientWidth));
   if (top !== 0 || left !== 0) {
     container.scrollBy({ top, left });
   }
