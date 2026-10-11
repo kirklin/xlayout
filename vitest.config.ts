@@ -20,6 +20,8 @@ export default defineConfig({
           name: "browser",
           include: ["src/**/*.test.tsx"],
           setupFiles: ["./test/setup.ts"],
+          // Pages of one browser take focus from each other; focus and drag tests need it.
+          fileParallelism: false,
           browser: {
             enabled: true,
             headless: true,
