@@ -26,7 +26,8 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return false;
 }
 
-const SCROLLABLE_OVERFLOW = /auto|scroll|overlay/;
+// `hidden` hides scrollbars, yet the element still scrolls; only `visible` and `clip` do not.
+const SCROLLABLE_OVERFLOW = /auto|scroll|overlay|hidden/;
 
 export function isScrollContainer(element: Element): boolean {
   const style = getOwnerWindow(element).getComputedStyle(element);
