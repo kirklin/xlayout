@@ -2,6 +2,7 @@ import { defineConfig } from "tsdown";
 
 export default defineConfig({
   entry: {
+    "dock": "src/dock/index.ts",
     "grid": "src/grid/index.ts",
     "index": "src/index.ts",
     "masonry": "src/masonry/index.ts",
