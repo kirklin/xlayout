@@ -297,6 +297,30 @@ describe("dock", () => {
     expect(getByTestId("terminal-count").textContent).toBe("1");
   });
 
+  it("scrolls a crowded tab bar to the selected tab and never scrolls the layout", async () => {
+    const files = Array.from({ length: 8 }, (_, index) => `file-${index}`);
+    const panels = Object.fromEntries(files.map(file => [file, { title: `Long file name ${file}`, content: <Counter name={file} /> }]));
+    const layout = (active: string): DockLayout => Dock.createDockLayout({ root: { panels: files, active } });
+    const style = { width: 320, height: 200 };
+    const view = await renderStrict(<Workbench panels={panels} layout={layout("file-0")} style={style} />);
+    const bar = (): HTMLElement => document.querySelector<HTMLElement>("[role=tablist]")!;
+    const contentRect = (): DOMRect => rectOf(document.querySelector("[data-dock-content]")!);
+    const inBar = (panel: string): boolean => rectOf(tab(panel)).left >= rectOf(bar()).left - 0.5 && rectOf(tab(panel)).right <= rectOf(bar()).right + 0.5;
+    expect(bar().scrollWidth).toBeGreaterThan(bar().clientWidth);
+    expect(rectOf(bar()).right).toBeLessThanOrEqual(rectOf(document.querySelector("[data-dock-controls]")!).left);
+    expect(inBar("file-6")).toBe(false);
+    await view.rerender(<Workbench panels={panels} layout={layout("file-6")} style={style} />);
+    expect(inBar("file-6")).toBe(true);
+    await view.rerender(<Workbench panels={panels} defaultLayout={layout("file-0")} style={style} key="uncontrolled" />);
+    const content = contentRect();
+    tab("file-0").focus();
+    await userEvent.keyboard("{End}");
+    expect(document.activeElement).toBe(tab("file-7"));
+    expect(inBar("file-7")).toBe(true);
+    expect(getByTestId("dock").scrollLeft).toBe(0);
+    expect(contentRect()).toMatchObject({ left: content.left, top: content.top });
+  });
+
   it("follows the reading direction for tab keys", async () => {
     await renderStrict(<Workbench dir="rtl" />);
     tab("explorer").focus();

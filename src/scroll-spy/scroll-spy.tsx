@@ -11,7 +11,7 @@ import { composeEventHandlers } from "../shared/events";
 import { renderSynchronously } from "../shared/flush";
 import { Primitive } from "../shared/primitive";
 import { observeElementSize } from "../shared/resize-observer";
-import { onScrollFrame } from "../shared/scroll";
+import { onScrollFrame, revealWithin } from "../shared/scroll";
 import { useControllableState } from "../shared/use-controllable-state";
 import {
   HASH_SYNC_DELAY,
@@ -25,7 +25,7 @@ import {
   SECTION_NAME,
 } from "./constants";
 import { ItemContext, NavContext, ScrollSpyContext, useScrollSpyContext } from "./context";
-import { boxWithin, measureSections, revealWithin, scrollerOf } from "./measure";
+import { boxWithin, measureSections, scrollerOf } from "./measure";
 import { redistributePositions, selectSection } from "./select";
 
 interface SectionView {

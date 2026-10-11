@@ -23,11 +23,15 @@ body {
 }
 
 .workbench [data-dock-group] {
-  @apply overflow-hidden bg-white dark:bg-zinc-950;
+  @apply overflow-clip bg-white dark:bg-zinc-950;
 }
 
 .workbench [data-dock-header] {
   @apply h-9 border-b border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900;
+}
+
+.workbench [data-dock-tablist] {
+  scrollbar-width: none;
 }
 
 .workbench [data-dock-tab] {
@@ -58,7 +62,7 @@ body {
 }
 
 .workbench [data-dock-floating] {
-  @apply overflow-hidden rounded-lg border border-zinc-300 shadow-2xl dark:border-zinc-700;
+  @apply overflow-clip rounded-lg border border-zinc-300 shadow-2xl dark:border-zinc-700;
 }
 
 .workbench [data-dock-floating] [data-dock-header] {

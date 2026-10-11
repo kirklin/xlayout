@@ -24,6 +24,7 @@ import { renderSynchronously } from "../shared/flush";
 import { clamp } from "../shared/math";
 import { Primitive } from "../shared/primitive";
 import { observeElementSize } from "../shared/resize-observer";
+import { revealWithin } from "../shared/scroll";
 import { useControllableState } from "../shared/use-controllable-state";
 import { useStableCallback } from "../shared/use-stable-callback";
 import { DRAG_THRESHOLD, FLOAT_SIZE, KEYBOARD_SHARE, MIN_SHARE, ROOT_NAME } from "./constants";
@@ -797,7 +798,8 @@ function Dock(props: DockProps): React.ReactNode {
         data-dragging={drag?.kind}
         {...rootProps}
         ref={composedRef}
-        style={{ position: "relative", overflow: "hidden", ...style }}
+        // Clipping without a scroll container, so focusing a part can never scroll the layout away.
+        style={{ position: "relative", overflow: "clip", ...style }}
       >
         <div ref={surfaceRef} data-dock-surface="" data-maximized={maximized ? "" : undefined} style={{ position: "absolute", inset: 0, display: "flex" }}>
           {maximized ? <GroupView group={maximized} place="main" /> : layout.root && <NodeView node={layout.root} />}
@@ -839,7 +841,7 @@ function SplitView({ split }: { split: DockSplit }): React.ReactNode {
       {split.children.map((child, index) => (
         <React.Fragment key={child.id}>
           {index > 0 && <SplitHandle split={split} index={index - 1} sizes={sizes} />}
-          <div data-dock-pane="" style={{ display: "flex", flex: `${sizes[index]} 1 0px`, minWidth: 0, minHeight: 0, overflow: "hidden" }}>
+          <div data-dock-pane="" style={{ display: "flex", flex: `${sizes[index]} 1 0px`, minWidth: 0, minHeight: 0, overflow: "clip" }}>
             <NodeView node={child} />
           </div>
         </React.Fragment>
@@ -910,7 +912,8 @@ function GroupView({ group, place }: { group: DockGroup; place: DockGroupPlace }
       style={{ display: "flex", flexDirection: "column", flex: "1 1 0px", minWidth: 0, minHeight: 0 }}
     >
       <div data-dock-header="" onPointerDown={headerDrag} style={{ display: "flex", flex: "none", touchAction: place === "floating" ? "none" : undefined }}>
-        <div ref={tabBarRef} role="tablist" aria-orientation="horizontal" data-dock-tablist="" style={{ display: "flex", flex: "1 1 auto", minWidth: 0 }}>
+        {/* Tabs that do not fit scroll within the bar, so they never run under the controls. */}
+        <div ref={tabBarRef} role="tablist" aria-orientation="horizontal" data-dock-tablist="" style={{ display: "flex", flex: "1 1 auto", minWidth: 0, overflowX: "auto", overflowY: "hidden" }}>
           {group.panels.map(panel => <Tab key={panel} group={group} panel={panel} />)}
         </div>
         {context.renderGroupControls && (
@@ -926,12 +929,20 @@ function GroupView({ group, place }: { group: DockGroup; place: DockGroupPlace }
 
 function Tab({ group, panel }: { group: DockGroup; panel: string }): React.ReactNode {
   const context = useDockContext(ROOT_NAME);
+  const tabRef = React.useRef<HTMLDivElement>(null);
   const definition = context.panels[panel]!;
   const active = group.active === panel;
   const closable = definition.closable ?? true;
   const dragging = context.drag?.kind === "panel" && context.drag.panel === panel;
+  React.useLayoutEffect(() => {
+    const element = tabRef.current!;
+    if (active) {
+      revealWithin(element, element.parentElement!);
+    }
+  }, [active]);
   return (
     <div
+      ref={tabRef}
       role="tab"
       id={elementId(`${context.dockId}-tab`, panel)}
       aria-selected={active}

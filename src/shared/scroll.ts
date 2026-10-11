@@ -1,4 +1,5 @@
 // @env browser
+import { isScrollContainer } from "./dom";
 
 interface ScrollFrameSubscription {
   listeners: Set<() => void>;
@@ -58,4 +59,31 @@ export function onScrollFrame(ownerDocument: Document, listener: () => void): ()
       subscriptions.delete(ownerDocument);
     }
   };
+}
+
+/**
+ * Scrolls the nearest scroll container between `element` and `boundary`, inclusive, just far
+ * enough to show the element. Containers outside the boundary, like the page, stay put.
+ */
+export function revealWithin(element: Element, boundary: Element): void {
+  let container = element.parentElement;
+  while (container && !isScrollContainer(container)) {
+    container = container === boundary ? null : container.parentElement;
+  }
+  if (!container) {
+    return;
+  }
+  const rect = element.getBoundingClientRect();
+  const containerRect = container.getBoundingClientRect();
+  const distance = (start: number, end: number, portStart: number, portSize: number): number => {
+    if (start < portStart || end - start > portSize) {
+      return start - portStart;
+    }
+    return end > portStart + portSize ? end - (portStart + portSize) : 0;
+  };
+  const top = distance(rect.top, rect.bottom, containerRect.top + container.clientTop, container.clientHeight);
+  const left = distance(rect.left, rect.right, containerRect.left + container.clientLeft, container.clientWidth);
+  if (top !== 0 || left !== 0) {
+    container.scrollBy({ top, left });
+  }
 }
