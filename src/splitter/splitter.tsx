@@ -107,14 +107,18 @@ function sizeContextsEqual(a: SizeContext, b: SizeContext): boolean {
     && a.viewportHeight === b.viewportHeight;
 }
 
-/** The flex style of a panel before the group knows every panel, as on the server. */
-function getInitialFlexStyle(defaultSize: PanelSize | undefined): React.CSSProperties {
-  if (defaultSize === undefined) {
+/**
+ * The flex style of a panel before the group measures it, as on the server. Panels without a
+ * size grow into the space the others leave. Percentages are bases that give up the handles'
+ * space in proportion, so sizes that add up to 100 render as they will once measured.
+ */
+function getInitialFlexStyle(size: PanelSize | undefined): React.CSSProperties {
+  if (size === undefined) {
     return { flexGrow: 1, flexShrink: 1, flexBasis: 0 };
   }
-  const { value, unit } = parsePanelSize(defaultSize);
+  const { value, unit } = parsePanelSize(size);
   if (unit === "%") {
-    return { flexGrow: value, flexShrink: 1, flexBasis: 0 };
+    return { flexGrow: 0, flexShrink: 1, flexBasis: `${value}%` };
   }
   return { flexGrow: 0, flexShrink: 0, flexBasis: `${value}${unit}` };
 }
@@ -178,7 +182,10 @@ export interface SplitterProps extends Omit<PrimitiveProps<"div">, "dir"> {
    * requested layout: the rendered layout may differ while the group is too small for it.
    */
   layout?: SplitterLayout;
-  /** Sizes to start with when uncontrolled; panels missing from it use their own `defaultSize`. */
+  /**
+   * Sizes to start with when uncontrolled; panels missing from it use their own `defaultSize`.
+   * The server renders them too, so a layout read from a cookie shows from the first paint.
+   */
   defaultLayout?: SplitterLayout;
   /** Called whenever the requested layout changes, including on every pointer move while dragging. */
   onLayoutChange?: (layout: SplitterLayout) => void;
@@ -752,6 +759,7 @@ function Splitter(props: SplitterProps): React.ReactNode {
     resizeMode,
     resizing,
     panelStates,
+    initialLayout: requested ?? defaultLayout,
     handleStates,
     registerPanel,
     registerHandle: registerHandleEntry,
@@ -759,7 +767,7 @@ function Splitter(props: SplitterProps): React.ReactNode {
     resizeWithKeyboard,
     resetHandle,
     actions,
-  }), [orientation, direction, disabled, resizeMode, resizing, panelStates, handleStates, registerPanel, registerHandleEntry, beginResize, resizeWithKeyboard, resetHandle, actions]);
+  }), [orientation, direction, disabled, resizeMode, resizing, panelStates, requested, defaultLayout, handleStates, registerPanel, registerHandleEntry, beginResize, resizeWithKeyboard, resetHandle, actions]);
 
   return (
     <SplitterContext value={contextValue}>
@@ -845,7 +853,7 @@ function SplitterPanel(props: SplitterPanelProps): React.ReactNode {
   const state = context.panelStates.get(id);
   const flexStyle: React.CSSProperties = state
     ? { flexGrow: state.size, flexShrink: 1, flexBasis: 0 }
-    : getInitialFlexStyle(defaultSize);
+    : getInitialFlexStyle(context.initialLayout?.[id] ?? defaultSize);
   const collapsedAway = state !== undefined && state.collapsed && fuzzyEqual(state.constraints.collapsedSize, 0);
   const panelContext = React.useMemo(() => ({ id }), [id]);
 

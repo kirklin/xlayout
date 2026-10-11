@@ -16,6 +16,8 @@ export default defineConfig({
         },
       },
       {
+        // Optimizing a dependency first imported during a run reloads the page and fails the file.
+        optimizeDeps: { include: ["react-dom/server"] },
         test: {
           name: "browser",
           include: ["src/**/*.test.tsx"],

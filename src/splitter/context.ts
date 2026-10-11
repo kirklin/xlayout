@@ -2,7 +2,7 @@ import type * as React from "react";
 import type { Direction, Orientation, Point } from "../shared/types";
 import type { ResizeLimit, ResizeSession } from "./handle-registry";
 import type { PanelSizeProps } from "./layout";
-import type { PanelConstraints, SplitterActions } from "./types";
+import type { PanelConstraints, SplitterActions, SplitterLayout } from "./types";
 import { createRequiredContext } from "../shared/context";
 import { PANEL_NAME, ROOT_NAME } from "./constants";
 
@@ -47,6 +47,8 @@ export interface SplitterContextValue {
   resizeMode: "live" | "deferred";
   resizing: ResizeState | null;
   panelStates: ReadonlyMap<string, PanelState>;
+  /** Sizes from the layout props, for panels the group has not measured yet, as on the server. */
+  initialLayout: SplitterLayout | undefined;
   handleStates: ReadonlyMap<string, HandleState>;
   registerPanel: (entry: PanelEntry) => () => void;
   registerHandle: (entry: HandleEntry) => () => void;
