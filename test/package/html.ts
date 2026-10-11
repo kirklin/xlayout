@@ -27,10 +27,13 @@ Object.assign(globalThis, {
   },
 });
 
-/** The page rendered directly, or turned into elements from the Server Components payload on stdin. */
+/**
+ * The page rendered directly, with the nonce given as the second argument if any, or turned
+ * into elements from the Server Components payload on stdin.
+ */
 function content(source: string | undefined): React.ReactNode {
   if (source === "page") {
-    return createElement(Page);
+    return createElement(Page, { nonce: process.argv[3] });
   }
   if (source === "payload") {
     const payload = createFromNodeStream<React.ReactNode>(process.stdin, { moduleMap: null, serverModuleMap: null, moduleLoading: null });

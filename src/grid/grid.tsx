@@ -17,6 +17,7 @@ import type {
 import * as React from "react";
 import { announce } from "../shared/announce";
 import { useComposedRefs } from "../shared/compose-refs";
+import { CspContext } from "../shared/csp";
 import { getOwnerWindow, prefersReducedMotion, sortByDocumentPosition } from "../shared/dom";
 import { isPrimaryPointerDown, startDragSession } from "../shared/drag";
 import { composeEventHandlers } from "../shared/events";
@@ -41,7 +42,7 @@ import {
 import { GridContext, GridItemContext, useGridContext, useGridItemContext } from "./context";
 import { bottomOf, resolveMove, resolveResize } from "./layout";
 import { slide, startAutoScroll } from "./motion";
-import { containerName, gridStyles } from "./styles";
+import { gridStyles } from "./styles";
 
 const DEFAULT_BREAKPOINTS: Readonly<Record<string, number>> = { [DEFAULT_BREAKPOINT]: 0 };
 const NO_LAYOUTS: GridLayouts = {};
@@ -636,29 +637,23 @@ function Grid(props: GridProps): React.ReactNode {
     step,
   }), [active, preview, committed, placeholder, pickedUp, registerItem, itemView, beginPointer, handleKey, handleBlur, step]);
 
-  const css = React.useMemo(() => gridStyles(scopeId, breakpoints, resolved), [scopeId, breakpoints, resolved]);
+  const nonce = React.use(CspContext);
+  const css = React.useMemo(
+    () => gridStyles({ scope: scopeId, breakpoints, layouts: resolved, rowHeight, gap }),
+    [scopeId, breakpoints, resolved, rowHeight, gap],
+  );
   return (
     <GridContext value={contextValue}>
       <Primitive.div
+        data-xlayout-grid={scopeId}
         data-breakpoint={active?.name}
         data-state={interaction ? (interaction.kind === "move" ? "dragging" : "resizing") : drop ? "dropping" : "idle"}
         {...rootProps}
         ref={composedRef}
-        style={{ containerType: "inline-size", containerName: containerName(scopeId), ...style }}
+        style={style}
       >
-        <style>{css}</style>
-        <div
-          ref={setCanvas}
-          data-xlayout-grid-canvas={scopeId}
-          {...dropHandlers}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(var(--xlayout-grid-columns), minmax(0, 1fr))",
-            gridAutoRows: `${rowHeight}px`,
-            gap: `${gap}px`,
-            position: "relative",
-          }}
-        >
+        <style nonce={nonce}>{css}</style>
+        <div ref={setCanvas} data-xlayout-grid-canvas={scopeId} {...dropHandlers}>
           {children}
         </div>
       </Primitive.div>
@@ -694,9 +689,8 @@ function GridItem(props: GridItemProps): React.ReactNode {
         data-static={view.isStatic ? "" : undefined}
         {...itemProps}
         ref={composedRef}
+        // The grid's style rules place the item; these show a change while it is previewed.
         style={{
-          gridColumn: "calc(var(--xlayout-grid-x) + 1) / span var(--xlayout-grid-w)",
-          gridRow: "calc(var(--xlayout-grid-y) + 1) / span var(--xlayout-grid-h)",
           ...(view.cell
             ? {
                 "--xlayout-grid-x": view.cell.x,

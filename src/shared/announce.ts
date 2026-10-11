@@ -19,7 +19,8 @@ function getLiveRegion(ownerDocument: Document, politeness: Politeness): HTMLEle
   region.setAttribute("aria-live", politeness);
   region.setAttribute("aria-relevant", "additions");
   region.setAttribute("role", politeness === "assertive" ? "log" : "status");
-  region.setAttribute("style", VISUALLY_HIDDEN_STYLE);
+  // Through the CSSOM, which content security policies leave alone, unlike a style attribute.
+  region.style.cssText = VISUALLY_HIDDEN_STYLE;
   ownerDocument.body.append(region);
   return region;
 }

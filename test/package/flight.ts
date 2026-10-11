@@ -19,9 +19,9 @@ const manifest: ClientManifest = new Proxy<Record<string, ClientReferenceEntry>>
   },
 });
 
-/** Prints the Server Components payload of the page. */
+/** Prints the Server Components payload of the page, rendered with the nonce given as the first argument, if any. */
 async function main(): Promise<void> {
-  const { prelude } = await prerenderToNodeStream(createElement(Page), manifest, {
+  const { prelude } = await prerenderToNodeStream(createElement(Page, { nonce: process.argv[2] }), manifest, {
     onError(error) {
       console.error(error);
       process.exitCode = 1;

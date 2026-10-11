@@ -15,9 +15,11 @@ function node(args: string[], input?: string): string {
   return result.stdout;
 }
 
-function render(source: "page" | "payload", payload?: string): Rendered {
-  return JSON.parse(node(["html.ts", source], payload)) as Rendered;
+function render(source: "page" | "payload", payload?: string, nonce?: string): Rendered {
+  return JSON.parse(node(["html.ts", source, ...(nonce === undefined ? [] : [nonce])], payload)) as Rendered;
 }
+
+const NONCE = "r4nd0m";
 
 /** The path of a module url within the package. */
 function packagePath(url: string): string {
@@ -54,5 +56,22 @@ describe("the built package on the server", () => {
       "dist/sticky/sticky.js",
     ]);
     expect(fromPayload.html).toBe(render("page").html);
+  });
+
+  it("renders markup without style attributes for a content security policy with a nonce", () => {
+    const { html } = render("page", undefined, NONCE);
+    expect(html).not.toContain(" style=");
+    const styles = html.match(/<style[^>]*>/g) ?? [];
+    expect(styles.length).toBeGreaterThan(1);
+    expect(styles.every(tag => tag === `<style nonce="${NONCE}">`)).toBe(true);
+    // The sidebar's width from its cookie now comes from a rule for its key.
+    const sidebar = /<div id="start"[^>]* data-xlayout-css="(\w+)"/.exec(html);
+    expect(sidebar).not.toBeNull();
+    expect(html).toContain(`:is([data-xlayout-css="${sidebar![1]}"],#xlayout-css){--xlayout-shell-sidebar-width:280px;`);
+
+    const payload = node(["--conditions=react-server", "--import", "./register.ts", "flight.ts", NONCE]);
+    const fromPayload = render("payload", payload);
+    expect(fromPayload.modules.map(packagePath)).toContain("dist/csp/csp.js");
+    expect(fromPayload.html).toBe(html);
   });
 });

@@ -1,7 +1,7 @@
 // @env node
 import type * as React from "react";
 import { createElement as h } from "react";
-import { Dock, Grid, Masonry, Overflow, ScrollSpy, Shell, Splitter, Sticky } from "xlayout";
+import { Csp, Dock, Grid, Masonry, Overflow, ScrollSpy, Shell, Splitter, Sticky } from "xlayout";
 
 /** The cookie of a visitor who widened the sidebar and then closed it. */
 const SHELL_COOKIE = Shell.serializeShellState({ start: { open: false, width: 280 } });
@@ -71,10 +71,13 @@ const SECTIONS = [
   { value: "sticky", Example: StickyExample },
 ];
 
-/** A page written as a Server Component: every part gets serializable props, and the helpers run here. */
-export function Page(): React.ReactNode {
+/**
+ * A page written as a Server Component: every part gets serializable props, and the helpers run
+ * here. With a nonce, it renders for a content security policy that allows styles only with it.
+ */
+export function Page({ nonce }: { nonce?: string | undefined }): React.ReactNode {
   const contents = SECTIONS.map(({ value }) => h(ScrollSpy.Item, { key: value, value }, h(ScrollSpy.Link, null, value)));
-  return h(
+  const page = h(
     ScrollSpy.Root,
     { defaultValue: "splitter" },
     h(
@@ -86,4 +89,5 @@ export function Page(): React.ReactNode {
       h(Shell.Main, null, SECTIONS.map(({ value, Example }) => h(ScrollSpy.Section, { key: value, value }, h(Example)))),
     ),
   );
+  return nonce === undefined ? page : h(Csp.Provider, { nonce }, page);
 }

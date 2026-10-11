@@ -11,9 +11,20 @@ function mirrorDocument(source: Document, target: Document): void {
   for (const attribute of source.documentElement.attributes) {
     target.documentElement.setAttribute(attribute.name, attribute.value);
   }
-  for (const node of source.head.querySelectorAll("style, link[rel=stylesheet]")) {
-    target.head.append(target.importNode(node, true));
+  for (const node of source.head.querySelectorAll<HTMLStyleElement | HTMLLinkElement>("style, link[rel=stylesheet]")) {
+    const copy = target.importNode(node, true);
+    // Once a page has loaded, browsers hide a nonce from the attribute; the property still holds
+    // it, and the window shares the page's content security policy.
+    copy.nonce = node.nonce;
+    target.head.append(copy);
   }
+  // A constructed style sheet belongs to one document, so the window gets copies of their rules.
+  const targetWindow = target.defaultView!;
+  target.adoptedStyleSheets = source.adoptedStyleSheets.map((sheet) => {
+    const copy = new targetWindow.CSSStyleSheet();
+    copy.replaceSync([...sheet.cssRules].map(rule => rule.cssText).join("\n"));
+    return copy;
+  });
 }
 
 export interface Popout {

@@ -801,13 +801,13 @@ function Dock(props: DockProps): React.ReactNode {
         // Clipping without a scroll container, so focusing a part can never scroll the layout away.
         style={{ position: "relative", overflow: "clip", ...style }}
       >
-        <div ref={surfaceRef} data-dock-surface="" data-maximized={maximized ? "" : undefined} style={{ position: "absolute", inset: 0, display: "flex" }}>
+        <Primitive.div ref={surfaceRef} data-dock-surface="" data-maximized={maximized ? "" : undefined} style={{ position: "absolute", inset: 0, display: "flex" }}>
           {maximized ? <GroupView group={maximized} place="main" /> : layout.root && <NodeView node={layout.root} />}
-        </div>
+        </Primitive.div>
         {layout.floating.map((entry, index) => <FloatingView key={entry.group.id} entry={entry} index={index} />)}
-        <div ref={overlayRef} data-dock-overlays="" style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
+        <Primitive.div ref={overlayRef} data-dock-overlays="" style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
         {zone && (
-          <div
+          <Primitive.div
             data-dock-drop-indicator=""
             data-target={zone.target.type}
             style={{ position: "absolute", left: zone.indicator.x, top: zone.indicator.y, width: zone.indicator.width, height: zone.indicator.height, pointerEvents: "none", zIndex: 1000 }}
@@ -833,7 +833,7 @@ function SplitView({ split }: { split: DockSplit }): React.ReactNode {
   const sizes = context.splitSizes(split);
   const horizontal = split.orientation === "horizontal";
   return (
-    <div
+    <Primitive.div
       data-dock-split=""
       data-orientation={split.orientation}
       style={{ display: "flex", flexDirection: horizontal ? "row" : "column", flex: "1 1 0px", minWidth: 0, minHeight: 0 }}
@@ -841,12 +841,12 @@ function SplitView({ split }: { split: DockSplit }): React.ReactNode {
       {split.children.map((child, index) => (
         <React.Fragment key={child.id}>
           {index > 0 && <SplitHandle split={split} index={index - 1} sizes={sizes} />}
-          <div data-dock-pane="" style={{ display: "flex", flex: `${sizes[index]} 1 0px`, minWidth: 0, minHeight: 0, overflow: "clip" }}>
+          <Primitive.div data-dock-pane="" style={{ display: "flex", flex: `${sizes[index]} 1 0px`, minWidth: 0, minHeight: 0, overflow: "clip" }}>
             <NodeView node={child} />
-          </div>
+          </Primitive.div>
         </React.Fragment>
       ))}
-    </div>
+    </Primitive.div>
   );
 }
 
@@ -857,7 +857,7 @@ function SplitHandle({ split, index, sizes }: { split: DockSplit; index: number;
   const pair = before + sizes[index + 1]!;
   const dragging = context.drag?.kind === "split" && context.drag.split === split.id;
   return (
-    <div
+    <Primitive.div
       role="separator"
       tabIndex={0}
       aria-label={context.handleLabel}
@@ -903,7 +903,7 @@ function GroupView({ group, place }: { group: DockGroup; place: DockGroupPlace }
       }
     : undefined;
   return (
-    <div
+    <Primitive.div
       ref={groupRef}
       data-dock-group=""
       data-group={group.id}
@@ -911,19 +911,19 @@ function GroupView({ group, place }: { group: DockGroup; place: DockGroupPlace }
       data-maximized={maximized ? "" : undefined}
       style={{ display: "flex", flexDirection: "column", flex: "1 1 0px", minWidth: 0, minHeight: 0 }}
     >
-      <div data-dock-header="" onPointerDown={headerDrag} style={{ display: "flex", flex: "none", touchAction: place === "floating" ? "none" : undefined }}>
+      <Primitive.div data-dock-header="" onPointerDown={headerDrag} style={{ display: "flex", flex: "none", touchAction: place === "floating" ? "none" : undefined }}>
         {/* Tabs that do not fit scroll within the bar, so they never run under the controls. */}
-        <div ref={tabBarRef} role="tablist" aria-orientation="horizontal" data-dock-tablist="" style={{ display: "flex", flex: "1 1 auto", minWidth: 0, overflowX: "auto", overflowY: "hidden" }}>
+        <Primitive.div ref={tabBarRef} role="tablist" aria-orientation="horizontal" data-dock-tablist="" style={{ display: "flex", flex: "1 1 auto", minWidth: 0, overflowX: "auto", overflowY: "hidden" }}>
           {group.panels.map(panel => <Tab key={panel} group={group} panel={panel} />)}
-        </div>
+        </Primitive.div>
         {context.renderGroupControls && (
-          <div data-dock-controls="" style={{ display: "flex", flex: "none" }}>
+          <Primitive.div data-dock-controls="" style={{ display: "flex", flex: "none" }}>
             {context.renderGroupControls({ group: group.id, place, panels: group.panels, active: group.active, maximized, api: context.api })}
-          </div>
+          </Primitive.div>
         )}
-      </div>
-      <div ref={contentRef} data-dock-content="" style={{ position: "relative", flex: "1 1 0px", minHeight: 0 }} />
-    </div>
+      </Primitive.div>
+      <Primitive.div ref={contentRef} data-dock-content="" style={{ position: "relative", flex: "1 1 0px", minHeight: 0 }} />
+    </Primitive.div>
   );
 }
 
@@ -941,7 +941,7 @@ function Tab({ group, panel }: { group: DockGroup; panel: string }): React.React
     }
   }, [active]);
   return (
-    <div
+    <Primitive.div
       ref={tabRef}
       role="tab"
       id={elementId(`${context.dockId}-tab`, panel)}
@@ -969,7 +969,7 @@ function Tab({ group, panel }: { group: DockGroup; panel: string }): React.React
       style={{ flex: "none", touchAction: "none" }}
     >
       {context.renderTab({ panel, title: definition.title, active, closable, close: () => context.api.close(panel) })}
-    </div>
+    </Primitive.div>
   );
 }
 
@@ -982,7 +982,7 @@ function FloatingView({ entry, index }: { entry: DockFloating; index: number }):
     }
   };
   return (
-    <div
+    <Primitive.div
       data-dock-floating=""
       data-group={entry.group.id}
       data-state={context.drag && "group" in context.drag && context.drag.group === entry.group.id ? "moving" : "idle"}
@@ -990,7 +990,7 @@ function FloatingView({ entry, index }: { entry: DockFloating; index: number }):
       style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, zIndex: 3 + index * 2, display: "flex" }}
     >
       <GroupView group={entry.group} place="floating" />
-      <div
+      <Primitive.div
         data-dock-float-resize=""
         aria-hidden
         onPointerDown={(event) => {
@@ -1000,7 +1000,7 @@ function FloatingView({ entry, index }: { entry: DockFloating; index: number }):
         }}
         style={{ position: "absolute", insetInlineEnd: 0, bottom: 0, width: 12, height: 12, touchAction: "none" }}
       />
-    </div>
+    </Primitive.div>
   );
 }
 

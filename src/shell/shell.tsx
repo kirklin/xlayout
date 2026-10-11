@@ -18,6 +18,7 @@ import type {
 import { useDirection } from "@radix-ui/react-direction";
 import * as React from "react";
 import { useComposedRefs } from "../shared/compose-refs";
+import { useServerMarkup } from "../shared/csp";
 import { getOwnerWindow, isEditableTarget, sortByDocumentPosition } from "../shared/dom";
 import { isPrimaryPointerDown, startDragSession } from "../shared/drag";
 import { composeEventHandlers } from "../shared/events";
@@ -60,14 +61,6 @@ function subscribeToStorage(onChange: () => void): () => void {
     storageListeners.delete(onChange);
     window.removeEventListener("storage", onChange);
   };
-}
-
-function subscribeToNothing(): () => void {
-  return () => {};
-}
-
-function useHydrated(): boolean {
-  return React.useSyncExternalStore(subscribeToNothing, () => true, () => false);
 }
 
 function lengthToPixels(length: ShellLength, context: LengthContext): number {
@@ -117,7 +110,7 @@ function Shell(props: ShellProps): React.ReactNode {
   } = props;
   const direction = useDirection(dir);
   const isMobile = useMediaQuery(breakpoint, false);
-  const hydrated = useHydrated();
+  const hydrated = !useServerMarkup();
   const mainId = React.useId();
   const mainRef = React.useRef<HTMLElement | null>(null);
   const [sidebars, setSidebars] = React.useState<ReadonlyMap<string, SidebarApi>>(() => new Map());

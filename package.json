@@ -33,6 +33,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./dist/index.js",
+    "./csp": "./dist/csp.js",
     "./dock": "./dist/dock.js",
     "./grid": "./dist/grid.js",
     "./masonry": "./dist/masonry.js",
