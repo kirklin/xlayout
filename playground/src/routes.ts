@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import type * as React from "react";
-import { Columns3, Ellipsis, PanelsTopLeft, Pin, TableOfContents } from "lucide-react";
+import { Columns3, Ellipsis, LayoutDashboard, PanelsTopLeft, Pin, TableOfContents } from "lucide-react";
+import { MasonryPage } from "~/demos/masonry";
 import { OverflowPage } from "~/demos/overflow";
 import { ScrollSpyPage } from "~/demos/scroll-spy";
 import { ShellPage } from "~/demos/shell";
@@ -17,6 +18,7 @@ export interface Route {
 export const ROUTES: Route[] = [
   { id: "shell", label: "Shell", icon: PanelsTopLeft, page: ShellPage },
   { id: "splitter", label: "Splitter", icon: Columns3, page: SplitterPage },
+  { id: "masonry", label: "Masonry", icon: LayoutDashboard, page: MasonryPage },
   { id: "overflow", label: "Overflow", icon: Ellipsis, page: OverflowPage },
   { id: "sticky", label: "Sticky", icon: Pin, page: StickyPage },
   { id: "scroll-spy", label: "Scroll spy", icon: TableOfContents, page: ScrollSpyPage },
