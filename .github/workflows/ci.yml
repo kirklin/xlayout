@@ -52,4 +52,11 @@ jobs:
       - run: nci
       - run: pnpm exec playwright install --with-deps chromium firefox webkit
       - run: nr test --run
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: failure-screenshots-${{ matrix.os }}
+          path: .vitest/attachments
+          include-hidden-files: true
       - run: pnpm -C playground build
