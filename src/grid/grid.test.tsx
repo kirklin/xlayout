@@ -2,7 +2,7 @@ import type { GridDrop, GridItemLayout, GridLayoutChange, GridLayouts, GridProps
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { commands, userEvent } from "vitest/browser";
-import { drag, nextFrames, releasePointer } from "../../test/pointer";
+import { drag, movePointer, nextFrames, releasePointer } from "../../test/pointer";
 import { getByTestId, renderError, renderStrict } from "../../test/render";
 import * as Grid from "./index";
 
@@ -38,6 +38,29 @@ function Board({ values = ["a", "b", "c"], width = 430, extra, style, ...gridPro
   );
 }
 
+interface ManyItemsProps {
+  count: number;
+  /** Called for every item that renders, by value. */
+  onItemRender: (value: string) => void;
+}
+
+/** Items in four columns of 100px, each in a profiler that reports when it renders. */
+function ManyItems({ count, onItemRender }: ManyItemsProps): React.ReactNode {
+  const values = Array.from({ length: count }, (_, index) => `i${index}`);
+  const layout = values.map((value, index) => ({ value, x: index % 4, y: Math.floor(index / 4), w: 1, h: 1 }));
+  return (
+    <Grid.Root data-testid="grid" columns={4} rowHeight={20} gap={10} defaultLayouts={{ base: layout }} style={{ width: 430 }}>
+      {values.map(value => (
+        <React.Profiler key={value} id={value} onRender={onItemRender}>
+          <Grid.Item value={value} data-testid={value}>
+            <Grid.DragHandle data-testid={`${value}-move`} aria-label={`Move ${value}`} style={{ display: "block", width: 20, height: 20, padding: 0 }} />
+          </Grid.Item>
+        </React.Profiler>
+      ))}
+    </Grid.Root>
+  );
+}
+
 function canvas(): HTMLElement {
   return getByTestId("grid").querySelector<HTMLElement>("[data-xlayout-grid-canvas]")!;
 }
@@ -66,6 +89,25 @@ async function settle(): Promise<void> {
 describe("grid", () => {
   afterEach(() => {
     document.querySelector("[data-xlayout-live-region]")?.remove();
+  });
+
+  it("renders again only the items a drag changes", async () => {
+    const rendered = new Set<string>();
+    await renderStrict(<ManyItems count={400} onItemRender={value => rendered.add(value)} />);
+    await settle();
+    const handle = getByTestId("i0-move").getBoundingClientRect();
+    rendered.clear();
+    await drag(getByTestId("i0-move"), 30, 0, { release: false });
+    await nextFrames();
+    expect([...rendered]).toEqual(["i0"]);
+    rendered.clear();
+    // Past the middle of the next item the two trade places, and the others stay.
+    await movePointer(handle.left + 10 + 110, handle.top + 10);
+    await nextFrames();
+    expect([...rendered].sort()).toEqual(["i0", "i1"]);
+    await releasePointer();
+    await settle();
+    expect(boxOf("i1")).toMatchObject({ x: 0, y: 0 });
   });
 
   it("places items from their layout and sizes rows and gaps", async () => {

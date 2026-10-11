@@ -1,8 +1,9 @@
 "use client";
 
 import type { PrimitiveProps } from "../shared/primitive";
+import type { Store } from "../shared/store";
 import type { Point } from "../shared/types";
-import type { GridContextValue, GridItemContextValue, InteractionKind, ItemEntry, ItemView } from "./context";
+import type { GridContextValue, GridFrame, GridItemContextValue, InteractionKind, ItemEntry, ItemView } from "./context";
 import type { Slide } from "./motion";
 import type { Arrival, ArrivalPlace, GridPeer } from "./peers";
 import type {
@@ -26,7 +27,9 @@ import { composeEventHandlers } from "../shared/events";
 import { renderSynchronously } from "../shared/flush";
 import { clamp } from "../shared/math";
 import { Primitive } from "../shared/primitive";
+import { useRegistry } from "../shared/registry";
 import { measureElementSize, observeElementSize } from "../shared/resize-observer";
+import { createStore, useStoreSelector } from "../shared/store";
 import { useControllableState } from "../shared/use-controllable-state";
 import { useStableCallback } from "../shared/use-stable-callback";
 import { breakpointFor, resolveBreakpoints, resolveLayouts } from "./breakpoints";
@@ -145,6 +148,24 @@ function sameLayout(a: readonly GridItemLayout[], b: readonly GridItemLayout[] |
 
 function cellOf(layout: readonly GridItemLayout[] | null | undefined, value: string): GridItemLayout | undefined {
   return layout?.find(item => item.value === value);
+}
+
+/** The entries of a layout by value, so looking one up costs the same however many there are. */
+function indexCells(layout: readonly GridItemLayout[] | null): ReadonlyMap<string, GridItemLayout> | null {
+  return layout && new Map(layout.map(item => [item.value, item]));
+}
+
+function samePoint(a: Point | null, b: Point | null): boolean {
+  return a === b || (a !== null && b !== null && a.x === b.x && a.y === b.y);
+}
+
+function sameView(a: ItemView, b: ItemView): boolean {
+  return a.state === b.state
+    && a.isStatic === b.isStatic
+    && a.leaving === b.leaving
+    && (a.cell === b.cell || (a.cell !== null && b.cell !== null && sameCell(a.cell, b.cell)))
+    && samePoint(a.offset, b.offset)
+    && (a.size === b.size || (a.size !== null && b.size !== null && a.size.width === b.size.width && a.size.height === b.size.height));
 }
 
 /** The layout once the item is gone, the others closing the gap it leaves. */
@@ -315,7 +336,7 @@ function Grid(props: GridProps): React.ReactNode {
   const [root, setRoot] = React.useState<HTMLDivElement | null>(null);
   const composedRef = useComposedRefs(ref, setRoot);
   const [canvas, setCanvas] = React.useState<HTMLDivElement | null>(null);
-  const [items, setItems] = React.useState<readonly ItemEntry[]>([]);
+  const [items, registerEntry] = useRegistry<ItemEntry>(sortByDocumentPosition);
   const [mounted, setMounted] = React.useState(false);
   const [width, setWidth] = React.useState<number | null>(null);
   const [interaction, setInteraction] = React.useState<Interaction | null>(null);
@@ -788,7 +809,7 @@ function Grid(props: GridProps): React.ReactNode {
     }
   });
 
-  const step = React.useCallback((kind: InteractionKind, value: string, unit: Point): boolean => {
+  const step = useStableCallback((kind: InteractionKind, value: string, unit: Point): boolean => {
     const origin = cellOf(committed, value);
     if (!active || !committed || !origin || interactionRef.current) {
       return false;
@@ -799,80 +820,62 @@ function Grid(props: GridProps): React.ReactNode {
     }
     commit(active.name, next.preview, { value, reason: kind });
     return true;
-  }, [active, committed, rulesFor, commit]);
+  });
 
-  const remove = React.useCallback((value: string): boolean => {
+  const remove = useStableCallback((value: string): boolean => {
     if (!active || !committed || !cellOf(committed, value) || interactionRef.current) {
       return false;
     }
     commitRemoval(active.name, withoutItem(committed, value, rulesFor(active.name)), value);
     return true;
-  }, [active, committed, rulesFor, commitRemoval]);
+  });
 
+  const entriesRef = React.useRef(new Map<string, ItemEntry>());
   const registerItem = React.useCallback((entry: ItemEntry) => {
-    setItems((current) => {
-      if (current.some(existing => existing.value === entry.value)) {
-        throw new Error(`${ROOT_NAME} already has an item with the value "${entry.value}".`);
-      }
-      return sortByDocumentPosition([...current, entry]);
-    });
+    const entries = entriesRef.current;
+    if (entries.has(entry.value)) {
+      throw new Error(`${ROOT_NAME} already has an item with the value "${entry.value}".`);
+    }
+    entries.set(entry.value, entry);
     labelsRef.current.set(entry.value, entry.label);
-    return () => setItems(current => current.filter(existing => existing !== entry));
-  }, []);
+    const unregister = registerEntry(entry);
+    return () => {
+      unregister();
+      entries.delete(entry.value);
+    };
+  }, [registerEntry]);
 
   const preview = interaction?.preview ?? incoming?.preview ?? drop?.preview ?? null;
+  const committedCells = React.useMemo(() => indexCells(committed), [committed]);
+  const previewCells = React.useMemo(() => indexCells(preview), [preview]);
+  const snapshotCells = React.useMemo(() => indexCells(interaction?.snapshot ?? null), [interaction?.snapshot]);
   const itemView = React.useCallback((value: string): ItemView => {
-    const isStatic = cellOf(committed, value)?.static === true;
+    const isStatic = committedCells?.get(value)?.static === true;
     if (interaction?.value === value) {
       const state = interaction.kind === "move" ? "dragging" : "resizing";
       const leaving = interaction.away !== null;
       if (interaction.input === "keyboard") {
-        return { state, isStatic, leaving, cell: cellOf(interaction.preview, value) ?? cellOf(interaction.snapshot, value) ?? null, offset: null, size: null };
+        return { state, isStatic, leaving, cell: previewCells?.get(value) ?? snapshotCells?.get(value) ?? null, offset: null, size: null };
       }
       // A pointer holds the item at its old cell, drawn where the pointer has it.
-      return { state, isStatic, leaving, cell: cellOf(interaction.snapshot, value) ?? null, offset: interaction.offset, size: interaction.size };
+      return { state, isStatic, leaving, cell: snapshotCells?.get(value) ?? null, offset: interaction.offset, size: interaction.size };
     }
-    return { state: "idle", isStatic, leaving: false, cell: preview ? cellOf(preview, value) ?? null : null, offset: null, size: null };
-  }, [committed, interaction, preview]);
-
-  // Items slide from where they were shown to where they are shown now; changes of breakpoint
-  // place them at once.
-  const shownRef = React.useRef<{ breakpoint: string | null; cells: Map<string, GridCell> }>({ breakpoint: null, cells: new Map() });
-  React.useLayoutEffect(() => {
-    const release = releaseRef.current;
-    releaseRef.current = null;
-    if (!canvas || !active || !committed) {
-      return;
-    }
+    // The style rules place an item where the preview leaves it, so it changes only when the preview moves it.
+    const shown = previewCells?.get(value);
+    const moved = shown !== undefined && !sameCell(shown, committedCells?.get(value));
+    return { state: "idle", isStatic, leaving: false, cell: moved ? shown : null, offset: null, size: null };
+  }, [committedCells, previewCells, snapshotCells, interaction]);
+  // The cell each item is drawn in, for sliding the ones that move.
+  const drawn = React.useMemo(() => {
     const cells = new Map<string, GridCell>();
     for (const entry of items) {
-      const cell = itemView(entry.value).cell ?? cellOf(committed, entry.value);
+      const cell = itemView(entry.value).cell ?? committedCells?.get(entry.value);
       if (cell) {
         cells.set(entry.value, cell);
       }
     }
-    const previous = shownRef.current;
-    shownRef.current = { breakpoint: active.name, cells };
-    if (!animate || previous.breakpoint !== active.name || prefersReducedMotion(canvas)) {
-      return;
-    }
-    const geometry = measureGeometry(canvas, active.columns, rowHeight, gap);
-    const slides: Slide[] = [];
-    for (const entry of items) {
-      const cell = cells.get(entry.value);
-      if (!cell || (interaction?.input === "pointer" && interaction.value === entry.value)) {
-        continue;
-      }
-      const to = cellOrigin(cell, geometry);
-      const before = previous.cells.get(entry.value);
-      if (release?.value === entry.value) {
-        slides.push({ element: entry.element, from: release.from, to });
-      } else if (before && !sameCell(before, cell)) {
-        slides.push({ element: entry.element, from: cellOrigin(before, geometry), to });
-      }
-    }
-    slide(canvas, slides);
-  });
+    return cells;
+  }, [items, itemView, committedCells]);
 
   // Like dragged items, items dragged in from outside land anywhere on the grid's box.
   const dropHandlers: React.HTMLAttributes<HTMLDivElement> = onDropItem
@@ -918,28 +921,39 @@ function Grid(props: GridProps): React.ReactNode {
       }
     : {};
 
-  const placeholder = interaction?.input === "pointer"
-    ? cellOf(interaction.preview, interaction.value) ?? null
-    : incoming
-      ? cellOf(incoming.preview, incoming.value) ?? null
-      : drop
-        ? cellOf(drop.preview, DROP_VALUE) ?? null
-        : null;
+  // The preview is the dragged item's, the arriving item's or the dropped one's, whichever there is.
+  const landing = interaction?.input === "pointer" ? interaction.value : incoming ? incoming.value : drop ? DROP_VALUE : null;
+  const placeholder = landing === null ? null : previewCells?.get(landing) ?? null;
   const pickedUp = interaction?.input === "keyboard" ? interaction : null;
-  const contextValue = React.useMemo((): GridContextValue => ({
+  const shownCells = previewCells ?? committedCells;
+  const frame = React.useMemo((): GridFrame => ({
     breakpoint: active?.name ?? null,
     columns: active?.columns ?? null,
     layout: preview ?? committed,
+    cellOf: value => shownCells?.get(value),
     placeholder,
     pickedUp: pickedUp ? { value: pickedUp.value, kind: pickedUp.kind } : null,
-    registerItem,
     itemView,
+    entries: items,
+    drawn,
+    held: interaction?.input === "pointer" ? interaction.value : null,
+  }), [active, preview, committed, shownCells, placeholder, pickedUp, itemView, items, drawn, interaction]);
+  const [frameStore] = React.useState(() => createStore(frame));
+  React.useLayoutEffect(() => {
+    frameStore.set(frame);
+  }, [frameStore, frame]);
+
+  const stepItem = React.useCallback((kind: InteractionKind, value: string, unit: Point) => step(kind, value, unit) ?? false, [step]);
+  const removeItem = React.useCallback((value: string) => remove(value) ?? false, [remove]);
+  const contextValue = React.useMemo((): GridContextValue => ({
+    frame: frameStore,
+    registerItem,
     beginPointer,
     handleKey,
     handleBlur,
-    step,
-    remove,
-  }), [active, preview, committed, placeholder, pickedUp, registerItem, itemView, beginPointer, handleKey, handleBlur, step, remove]);
+    step: stepItem,
+    remove: removeItem,
+  }), [frameStore, registerItem, beginPointer, handleKey, handleBlur, stepItem, removeItem]);
 
   const nonce = React.use(CspContext);
   const css = React.useMemo(
@@ -963,10 +977,60 @@ function Grid(props: GridProps): React.ReactNode {
         <style nonce={nonce}>{css}</style>
         <div ref={setCanvas} data-xlayout-grid-canvas={scopeId}>
           {children}
+          <GridMotion frame={frameStore} canvas={canvas} animate={animate} rowHeight={rowHeight} gap={gap} releaseRef={releaseRef} />
         </div>
       </Primitive.div>
     </GridContext>
   );
+}
+
+interface GridMotionProps {
+  frame: Store<GridFrame>;
+  canvas: HTMLElement | null;
+  animate: boolean;
+  rowHeight: number;
+  gap: number;
+  /** The item a pointer let go of, drawn where it was dropped. */
+  releaseRef: React.RefObject<Release | null>;
+}
+
+/**
+ * Slides items from where they were drawn to where they are drawn now; a change of breakpoint
+ * places them at once. It renders with the items a change concerns, after them, so it measures
+ * them where that change put them.
+ */
+function GridMotion({ frame, canvas, animate, rowHeight, gap, releaseRef }: GridMotionProps): null {
+  const current = useStoreSelector(frame, state => state);
+  const shownRef = React.useRef<{ breakpoint: string | null; cells: ReadonlyMap<string, GridCell> }>({ breakpoint: null, cells: new Map() });
+  React.useLayoutEffect(() => {
+    const release = releaseRef.current;
+    releaseRef.current = null;
+    if (!canvas || current.breakpoint === null || current.columns === null) {
+      return;
+    }
+    const previous = shownRef.current;
+    shownRef.current = { breakpoint: current.breakpoint, cells: current.drawn };
+    if (!animate || previous.breakpoint !== current.breakpoint || prefersReducedMotion(canvas)) {
+      return;
+    }
+    const geometry = measureGeometry(canvas, current.columns, rowHeight, gap);
+    const slides: Slide[] = [];
+    for (const entry of current.entries) {
+      const cell = current.drawn.get(entry.value);
+      if (!cell || current.held === entry.value) {
+        continue;
+      }
+      const to = cellOrigin(cell, geometry);
+      const before = previous.cells.get(entry.value);
+      if (release?.value === entry.value) {
+        slides.push({ element: entry.element, from: release.from, to });
+      } else if (before && !sameCell(before, cell)) {
+        slides.push({ element: entry.element, from: cellOrigin(before, geometry), to });
+      }
+    }
+    slide(canvas, slides);
+  }, [current, canvas, animate, rowHeight, gap, releaseRef]);
+  return null;
 }
 
 export interface GridItemProps extends PrimitiveProps<"div"> {
@@ -987,7 +1051,8 @@ function GridItem(props: GridItemProps): React.ReactNode {
     [registerItem, value, name],
   );
   const composedRef = useComposedRefs(ref, register);
-  const view = context.itemView(value);
+  const selectView = React.useCallback((frame: GridFrame) => frame.itemView(value), [value]);
+  const view = useStoreSelector(context.frame, selectView, sameView);
   const itemContext = React.useMemo((): GridItemContextValue => ({ value, label: name }), [value, name]);
   return (
     <GridItemContext value={itemContext}>
@@ -1025,7 +1090,11 @@ function useHandleProps(kind: InteractionKind, partName: string, props: HandlePr
   const item = useGridItemContext(partName);
   const [element, setElement] = React.useState<HTMLButtonElement | null>(null);
   const composedRef = useComposedRefs(ref, setElement);
-  const picked = context.pickedUp?.value === item.value && context.pickedUp.kind === kind;
+  const selectPicked = React.useCallback(
+    (frame: GridFrame) => frame.pickedUp?.value === item.value && frame.pickedUp.kind === kind,
+    [item.value, kind],
+  );
+  const picked = useStoreSelector(context.frame, selectPicked);
   // The handle the keyboard used to move the item into this grid from another takes focus again.
   React.useLayoutEffect(() => {
     if (element && takeArrivalFocus(item.value, kind)) {
@@ -1071,9 +1140,18 @@ function GridResizeHandle(props: GridResizeHandleProps): React.ReactNode {
 export interface GridPlaceholderProps extends PrimitiveProps<"div"> {}
 
 /** Shows where a dragged, resized or arriving item would land; renders nothing otherwise. */
+function selectPlaceholder(frame: GridFrame): GridCell | null {
+  return frame.placeholder;
+}
+
+function samePlaceholder(a: GridCell | null, b: GridCell | null): boolean {
+  return a === b || (a !== null && b !== null && sameCell(a, b));
+}
+
 function GridPlaceholder(props: GridPlaceholderProps): React.ReactNode {
   const { style, ...placeholderProps } = props;
-  const { placeholder } = useGridContext(PLACEHOLDER_NAME);
+  const { frame } = useGridContext(PLACEHOLDER_NAME);
+  const placeholder = useStoreSelector(frame, selectPlaceholder, samePlaceholder);
   if (!placeholder) {
     return null;
   }

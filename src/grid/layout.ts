@@ -10,12 +10,66 @@ export function bottomOf(layout: GridLayout): number {
   return layout.reduce((bottom, item) => Math.max(bottom, item.y + item.h), 0);
 }
 
-function lanes(start: number, length: number): number[] {
-  return Array.from({ length }, (_, index) => start + index);
-}
-
 function inOrder(layout: GridLayout, values: ReadonlyMap<string, GridItemLayout>): GridItemLayout[] {
   return layout.map(item => values.get(item.value)!);
+}
+
+/**
+ * The items placed so far by the cells they cover: what a cell overlaps is found by looking at
+ * its own cells, however many items there are. Rows are kept only where items are.
+ */
+class Occupancy {
+  private readonly rows = new Map<number, Int32Array>();
+  private readonly items: GridItemLayout[] = [];
+  private readonly columns: number;
+
+  constructor(columns: number) {
+    this.columns = columns;
+  }
+
+  static of(items: GridLayout, columns: number): Occupancy {
+    const occupancy = new Occupancy(columns);
+    for (const item of items) {
+      occupancy.add(item);
+    }
+    return occupancy;
+  }
+
+  add(item: GridItemLayout): void {
+    this.items.push(item);
+    const id = this.items.length;
+    for (let row = item.y; row < item.y + item.h; row++) {
+      let cells = this.rows.get(row);
+      if (!cells) {
+        cells = new Int32Array(this.columns);
+        this.rows.set(row, cells);
+      }
+      cells.fill(id, item.x, item.x + item.w);
+    }
+  }
+
+  /** An item that `cell` overlaps, if any. */
+  blockerOf(cell: GridCell): GridItemLayout | undefined {
+    const end = Math.min(cell.x + cell.w, this.columns);
+    for (let row = cell.y; row < cell.y + cell.h; row++) {
+      const cells = this.rows.get(row);
+      if (!cells) {
+        continue;
+      }
+      for (let column = Math.max(0, cell.x); column < end; column++) {
+        const id = cells[column]!;
+        if (id !== 0) {
+          return this.items[id - 1];
+        }
+      }
+    }
+    return undefined;
+  }
+}
+
+/** The columns a layout reaches into. */
+function widthOf(layout: GridLayout): number {
+  return layout.reduce((width, item) => Math.max(width, item.x + item.w), 0);
 }
 
 export function validateLayout(layout: GridLayout, breakpoint: string): void {
@@ -41,20 +95,20 @@ export function fitItem(item: GridItemLayout, columns: number): GridItemLayout {
 
 /**
  * Removes overlaps by moving items down. Fixed items stay put; the others, in order of their
- * rows and then their columns, go below whatever they would overlap.
+ * rows and then their columns, go below whatever they would overlap. Going below the item in
+ * the way never skips a row where the item would fit, so each lands in the first free row.
  */
 function settle(layout: GridLayout, isFixed: (item: GridItemLayout) => boolean): GridItemLayout[] {
-  const placed = layout.filter(isFixed);
-  const moved = new Map(placed.map(item => [item.value, item]));
+  const fixed = layout.filter(isFixed);
+  const placed = Occupancy.of(fixed, widthOf(layout));
+  const moved = new Map(fixed.map(item => [item.value, item]));
   const movable = layout.filter(item => !isFixed(item)).sort((a, b) => a.y - b.y || a.x - b.x);
   for (const item of movable) {
     let current = item;
-    let blocker = placed.find(other => collides(current, other));
-    while (blocker) {
+    for (let blocker = placed.blockerOf(current); blocker; blocker = placed.blockerOf(current)) {
       current = { ...current, y: blocker.y + blocker.h };
-      blocker = placed.find(other => collides(current, other));
     }
-    placed.push(current);
+    placed.add(current);
     moved.set(current.value, current);
   }
   return inOrder(layout, moved);
@@ -70,21 +124,25 @@ export function compactLayout(layout: GridLayout, compact: GridCompaction): Grid
   }
   const vertical = compact === "vertical";
   const statics = layout.filter(item => item.static);
+  const fixed = Occupancy.of(statics, widthOf(statics));
+  // How far each column, or each row, is taken by the items moved so far.
   const reach = new Map<number, number>();
   const result = new Map(statics.map(item => [item.value, item]));
   const moving = layout
     .filter(item => !item.static)
     .sort((a, b) => (vertical ? a.y - b.y || a.x - b.x : a.x - b.x || a.y - b.y));
   for (const item of moving) {
-    const crossed = vertical ? lanes(item.x, item.w) : lanes(item.y, item.h);
-    const start = Math.max(0, ...crossed.map(lane => reach.get(lane) ?? 0));
-    let current: GridItemLayout = vertical ? { ...item, y: start } : { ...item, x: start };
-    let blocker = statics.find(other => collides(current, other));
-    while (blocker) {
-      current = vertical ? { ...current, y: blocker.y + blocker.h } : { ...current, x: blocker.x + blocker.w };
-      blocker = statics.find(other => collides(current, other));
+    const first = vertical ? item.x : item.y;
+    const end = first + (vertical ? item.w : item.h);
+    let start = 0;
+    for (let lane = first; lane < end; lane++) {
+      start = Math.max(start, reach.get(lane) ?? 0);
     }
-    for (const lane of crossed) {
+    let current: GridItemLayout = vertical ? { ...item, y: start } : { ...item, x: start };
+    for (let blocker = fixed.blockerOf(current); blocker; blocker = fixed.blockerOf(current)) {
+      current = vertical ? { ...current, y: blocker.y + blocker.h } : { ...current, x: blocker.x + blocker.w };
+    }
+    for (let lane = first; lane < end; lane++) {
       reach.set(lane, vertical ? current.y + current.h : current.x + current.w);
     }
     result.set(item.value, current);

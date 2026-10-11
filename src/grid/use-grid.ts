@@ -1,8 +1,10 @@
 "use client";
 
 import type { Point } from "../shared/types";
+import type { GridFrame } from "./context";
 import type { GridItemLayout } from "./types";
 import * as React from "react";
+import { useStoreSelector } from "../shared/store";
 import { useGridContext, useGridItemContext } from "./context";
 
 export interface GridApi {
@@ -13,9 +15,17 @@ export interface GridApi {
   layout: readonly GridItemLayout[] | null;
 }
 
+function selectGrid(frame: GridFrame): GridApi {
+  return { breakpoint: frame.breakpoint, columns: frame.columns, layout: frame.layout };
+}
+
+function sameGrid(a: GridApi, b: GridApi): boolean {
+  return a.breakpoint === b.breakpoint && a.columns === b.columns && a.layout === b.layout;
+}
+
 export function useGrid(): GridApi {
-  const { breakpoint, columns, layout } = useGridContext("useGrid");
-  return React.useMemo(() => ({ breakpoint, columns, layout }), [breakpoint, columns, layout]);
+  const { frame } = useGridContext("useGrid");
+  return useStoreSelector(frame, selectGrid, sameGrid);
 }
 
 /** A step toward the inline start or end, or up or down. */
@@ -42,15 +52,39 @@ export interface GridItemApi {
   remove: () => boolean;
 }
 
+interface ItemState {
+  cell: GridItemLayout | null;
+  state: "idle" | "dragging" | "resizing";
+}
+
+/** Whether two entries of a layout say the same, field by field. */
+function sameEntry(a: GridItemLayout | null, b: GridItemLayout | null): boolean {
+  if (a === b) {
+    return true;
+  }
+  if (a === null || b === null) {
+    return false;
+  }
+  const keys = Object.keys(a) as (keyof GridItemLayout)[];
+  return keys.length === Object.keys(b).length && keys.every(key => a[key] === b[key]);
+}
+
+function sameItemState(a: ItemState, b: ItemState): boolean {
+  return a.state === b.state && sameEntry(a.cell, b.cell);
+}
+
 /** The state of the nearest `Grid.Item`, and ways to move, resize or remove it without dragging. */
 export function useGridItem(): GridItemApi {
-  const { layout, itemView, step, remove: removeItem } = useGridContext("useGridItem");
+  const { frame, step, remove: removeItem } = useGridContext("useGridItem");
   const { value } = useGridItemContext("useGridItem");
-  const { state } = itemView(value);
+  const selectItem = React.useCallback(
+    (current: GridFrame): ItemState => ({ cell: current.cellOf(value) ?? null, state: current.itemView(value).state }),
+    [value],
+  );
+  const { cell, state } = useStoreSelector(frame, selectItem, sameItemState);
   const move = React.useCallback((direction: GridMove) => step("move", value, MOVES[direction]), [step, value]);
   const resize = React.useCallback((change: GridResize) => step("resize", value, RESIZES[change]), [step, value]);
   const remove = React.useCallback(() => removeItem(value), [removeItem, value]);
-  const cell = layout?.find(item => item.value === value) ?? null;
   return React.useMemo(() => ({
     value,
     cell,

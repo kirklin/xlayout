@@ -119,3 +119,81 @@ describe("grid layout", () => {
     expect(() => validateLayout([item("a", 0, 0, 0, 1)], "lg")).toThrow("sizes from 1");
   });
 });
+
+/** The rules as written: every item looks at every other one, without regard for speed. */
+function referenceNormalize(layout: GridLayout, rules: GridRules): GridItemLayout[] {
+  const fitted = layout.map(entry => fitItem(entry, rules.columns));
+  const byValue = (entries: GridItemLayout[]): Map<string, GridItemLayout> => new Map(entries.map(entry => [entry.value, entry]));
+  const placed = fitted.filter(entry => entry.static);
+  const settled = byValue(placed);
+  for (const entry of fitted.filter(other => !other.static).sort((a, b) => a.y - b.y || a.x - b.x)) {
+    let current = entry;
+    for (let blocker = placed.find(other => collides(current, other)); blocker; blocker = placed.find(other => collides(current, other))) {
+      current = { ...current, y: blocker.y + blocker.h };
+    }
+    placed.push(current);
+    settled.set(current.value, current);
+  }
+  const overlapsGone = fitted.map(entry => settled.get(entry.value)!);
+  if (rules.compact === "none") {
+    return overlapsGone;
+  }
+  const vertical = rules.compact === "vertical";
+  const statics = overlapsGone.filter(entry => entry.static);
+  const reach = new Map<number, number>();
+  const compacted = byValue(statics);
+  const moving = overlapsGone.filter(entry => !entry.static).sort((a, b) => (vertical ? a.y - b.y || a.x - b.x : a.x - b.x || a.y - b.y));
+  for (const entry of moving) {
+    const lanes = Array.from({ length: vertical ? entry.w : entry.h }, (_, index) => (vertical ? entry.x : entry.y) + index);
+    const start = Math.max(0, ...lanes.map(lane => reach.get(lane) ?? 0));
+    let current: GridItemLayout = vertical ? { ...entry, y: start } : { ...entry, x: start };
+    for (let blocker = statics.find(other => collides(current, other)); blocker; blocker = statics.find(other => collides(current, other))) {
+      current = vertical ? { ...current, y: blocker.y + blocker.h } : { ...current, x: blocker.x + blocker.w };
+    }
+    for (const lane of lanes) {
+      reach.set(lane, vertical ? current.y + current.h : current.x + current.w);
+    }
+    compacted.set(entry.value, current);
+  }
+  return overlapsGone.map(entry => compacted.get(entry.value)!);
+}
+
+function randomLayout(random: () => number, count: number, columns: number): GridItemLayout[] {
+  return Array.from({ length: count }, (_, index) => {
+    const w = 1 + Math.floor(random() * Math.min(4, columns));
+    return item(`item-${index}`, Math.floor(random() * columns), Math.floor(random() * count / 2), w, 1 + Math.floor(random() * 3), random() < 0.1 ? { static: true } : {});
+  });
+}
+
+describe("grid layout with many items", () => {
+  it("settles and compacts as the rules read, written out plainly, for random layouts", () => {
+    let seed = 5;
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    for (let round = 0; round < 300; round++) {
+      const columns = 1 + Math.floor(random() * 12);
+      const layout = randomLayout(random, Math.floor(random() * 40), columns);
+      const rules: GridRules = { columns, compact: (["vertical", "horizontal", "none"] as const)[round % 3]!, collision: "push" };
+      expect(normalizeLayout(layout, rules)).toEqual(referenceNormalize(layout, rules));
+    }
+  });
+
+  it("lays out and moves among thousands of items quickly", () => {
+    let seed = 9;
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    const layout = randomLayout(random, 3000, 12).map(entry => ({ ...entry, static: false }));
+    let start = performance.now();
+    const settled = normalizeLayout(layout, PUSH);
+    expect(performance.now() - start).toBeLessThan(100);
+    start = performance.now();
+    for (let move = 0; move < 20; move++) {
+      expect(resolveMove(settled, "item-0", { x: move % 10, y: 40 + move }, PUSH)).not.toBeNull();
+    }
+    expect(performance.now() - start).toBeLessThan(400);
+  });
+});

@@ -1,4 +1,5 @@
 import type * as React from "react";
+import type { Store } from "../shared/store";
 import type { Point } from "../shared/types";
 import type { GridCell, GridEdge, GridItemLayout } from "./types";
 import { createRequiredContext } from "../shared/context";
@@ -27,18 +28,33 @@ export interface ItemView {
   size: { width: number; height: number } | null;
 }
 
-export interface GridContextValue {
+/**
+ * What the grid shows now. The root keeps it in a store, and each part reads only what it needs,
+ * so a drag renders again only the items whose place it changes.
+ */
+export interface GridFrame {
   /** The breakpoint in use, once the grid was measured. */
   breakpoint: string | null;
   columns: number | null;
   /** The layout shown at that breakpoint, including a change being previewed. */
   layout: readonly GridItemLayout[] | null;
+  /** The entry of an item in that layout. */
+  cellOf: (value: string) => GridItemLayout | undefined;
   /** Where the dragged, resized or dropped item would land. */
   placeholder: GridCell | null;
   /** The item and kind a keyboard user picked up. */
   pickedUp: { value: string; kind: InteractionKind } | null;
-  registerItem: (entry: ItemEntry) => () => void;
   itemView: (value: string) => ItemView;
+  /** The items, in document order, and the cell each is drawn in. */
+  entries: readonly ItemEntry[];
+  drawn: ReadonlyMap<string, GridCell>;
+  /** The item a pointer holds, which is drawn where the pointer has it. */
+  held: string | null;
+}
+
+export interface GridContextValue {
+  frame: Store<GridFrame>;
+  registerItem: (entry: ItemEntry) => () => void;
   beginPointer: (kind: InteractionKind, value: string, event: React.PointerEvent<HTMLElement>, edge: GridEdge) => void;
   handleKey: (kind: InteractionKind, value: string, event: React.KeyboardEvent<HTMLElement>, edge: GridEdge) => void;
   handleBlur: (value: string) => void;
