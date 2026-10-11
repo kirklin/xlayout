@@ -133,11 +133,6 @@ export function startDragSession(
     if (event.pointerId !== pointerId) {
       return;
     }
-    // The button was released outside the window, where no `pointerup` reached us.
-    if (event.buttons === 0) {
-      finish();
-      return;
-    }
     if (!started) {
       const distance = Math.hypot(event.clientX - origin.x, event.clientY - origin.y);
       if (distance < threshold) {
