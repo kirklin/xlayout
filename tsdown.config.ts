@@ -16,6 +16,9 @@ export default defineConfig({
   platform: "neutral",
   unbundle: true,
   deps: { neverBundle: [/^xlayout\//] },
+  // Every module keeps its own file, so its "use client" directive survives the build.
+  checks: { moduleLevelDirective: false },
+  failOnWarn: true,
   dts: true,
   exports: true,
   publint: true,

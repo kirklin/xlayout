@@ -1,3 +1,5 @@
+"use client";
+
 import type { DockApi } from "./context";
 import { useDockContext } from "./context";
 

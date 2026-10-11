@@ -1,3 +1,5 @@
+"use client";
+
 import type { SidebarApi } from "./types";
 import { useShellContext } from "./context";
 

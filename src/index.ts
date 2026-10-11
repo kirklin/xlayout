@@ -1,5 +1,5 @@
-// Each component entry is a client module; importing it by package name keeps the namespace
-// a module namespace, so Server Components can render `Splitter.Root` and friends.
+// Importing the entries by package name keeps each namespace the entry's own module namespace,
+// which bundlers can tree-shake; a relative import makes the build assemble a separate object.
 export * as Dock from "xlayout/dock";
 export * as Grid from "xlayout/grid";
 export * as Masonry from "xlayout/masonry";

@@ -1,3 +1,5 @@
+"use client";
+
 import type { PrimitiveProps } from "../shared/primitive";
 import type { Rect } from "../shared/types";
 import type { ItemContextValue, ItemEntry, NavContextValue, ScrollSpyContextValue, SectionEntry } from "./context";

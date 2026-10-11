@@ -1,3 +1,5 @@
+"use client";
+
 import type { PrimitiveProps } from "../shared/primitive";
 import type { Direction, Orientation, Point } from "../shared/types";
 import type { HandleEntry, HandleState, PanelEntry, ResizeState, SplitterContextValue } from "./context";

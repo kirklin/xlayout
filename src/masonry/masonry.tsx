@@ -1,3 +1,5 @@
+"use client";
+
 import type { PrimitiveProps } from "../shared/primitive";
 import type { ItemEntry, MasonryContextValue } from "./context";
 import type { MasonryAssignment, MasonryLayoutInfo, MasonryNative, MasonryPlacement, MasonryTolerance } from "./types";

@@ -1,3 +1,5 @@
+"use client";
+
 import type { PrimitiveProps } from "../shared/primitive";
 import type { GroupMember, StickyContextValue, StickyGroupContextValue } from "./context";
 import type { PhysicalSide, StickySide } from "./types";

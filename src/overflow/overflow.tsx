@@ -1,3 +1,5 @@
+"use client";
+
 import type { PrimitiveProps } from "../shared/primitive";
 import type { Direction, Orientation } from "../shared/types";
 import type { DividerEntry, ItemEntry, OverflowContextValue } from "./context";

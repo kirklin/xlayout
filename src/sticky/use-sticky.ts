@@ -1,3 +1,5 @@
+"use client";
+
 import type { StickySide } from "./types";
 import { useStickyContext } from "./context";
 

@@ -1,3 +1,5 @@
+"use client";
+
 import type { Point } from "../shared/types";
 import type { GridItemLayout } from "./types";
 import * as React from "react";

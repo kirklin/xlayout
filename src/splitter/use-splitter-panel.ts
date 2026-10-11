@@ -1,3 +1,5 @@
+"use client";
+
 import type { PanelSize } from "./types";
 import * as React from "react";
 import { useSplitterContext, useSplitterPanelContext } from "./context";

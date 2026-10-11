@@ -1,3 +1,5 @@
+"use client";
+
 import type { PrimitiveProps } from "../shared/primitive";
 import type { Point } from "../shared/types";
 import type { GridContextValue, GridItemContextValue, InteractionKind, ItemEntry, ItemView } from "./context";

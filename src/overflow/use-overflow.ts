@@ -1,3 +1,5 @@
+"use client";
+
 import type { OverflowGroupState } from "./types";
 import { useOverflowContext } from "./context";
 
