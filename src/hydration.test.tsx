@@ -1,8 +1,7 @@
 import * as React from "react";
 import { hydrateRoot } from "react-dom/client";
 import { renderToString } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
-import { nextFrames } from "../test/pointer";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { getByTestId } from "../test/render";
 import * as Dock from "./dock";
 import * as Grid from "./grid";
@@ -30,14 +29,13 @@ function renderOnServer(ui: React.ReactNode): HTMLElement {
   return container;
 }
 
-/** Hydrates the server markup in `container` and returns the errors React recovered from. */
-async function hydrate(container: HTMLElement, ui: React.ReactNode): Promise<unknown[]> {
+/** Starts hydrating the server markup in `container`; the returned list collects the errors React recovers from. */
+function hydrate(container: HTMLElement, ui: React.ReactNode): unknown[] {
   const errors: unknown[] = [];
   const root = hydrateRoot(container, <React.StrictMode>{ui}</React.StrictMode>, {
     onRecoverableError: error => errors.push(error),
   });
   cleanups.unshift(() => root.unmount());
-  await nextFrames(3);
   return errors;
 }
 
@@ -102,8 +100,10 @@ describe("hydration", () => {
     const container = renderOnServer(ui);
     const testIds = example.panels.map((_, index) => "abc"[index]!);
     const before = boxesOf(testIds);
-    expect(await hydrate(container, ui)).toEqual([]);
-    expect(getByTestId("a").style.getPropertyValue("--xlayout-splitter-panel-size")).not.toBe("");
+    const errors = hydrate(container, ui);
+    // Panels report their size once the group has measured them.
+    await vi.waitFor(() => expect(getByTestId("a").style.getPropertyValue("--xlayout-splitter-panel-size")).not.toBe(""));
+    expect(errors).toEqual([]);
     expectSameBoxes(boxesOf(testIds), before);
   });
 
@@ -158,10 +158,12 @@ describe("hydration", () => {
     );
     const container = renderOnServer(ui);
     const chartBefore = boxesOf(["chart"]);
-    expect(await hydrate(container, ui)).toEqual([]);
+    const errors = hydrate(container, ui);
+    // The dock adds its panels' hosts once the hydrated tree is committed.
+    await vi.waitFor(() => expect(container.querySelectorAll("[data-dock-content] [data-dock-panel]")).toHaveLength(2));
+    expect(errors).toEqual([]);
     expect(getByTestId("sidebar").dataset.state).toBe("collapsed");
     expect(getByTestId("sidebar").style.getPropertyValue("--xlayout-shell-sidebar-width")).toBe("280px");
     expectSameBoxes(boxesOf(["chart"]), chartBefore);
-    expect(container.querySelectorAll("[data-dock-content] [data-dock-panel]")).toHaveLength(2);
   });
 });
