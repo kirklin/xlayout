@@ -1,1 +1,3 @@
-export {};
+// Each component entry is a client module; importing it by package name keeps the namespace
+// a module namespace, so Server Components can render `Splitter.Root` and friends.
+export * as Splitter from "xlayout/splitter";

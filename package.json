@@ -33,6 +33,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./dist/index.js",
+    "./splitter": "./dist/splitter.js",
     "./package.json": "./package.json"
   },
   "types": "./dist/index.d.ts",
