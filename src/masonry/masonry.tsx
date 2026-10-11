@@ -6,9 +6,10 @@ import type { MasonryAssignment, MasonryHeightEstimate, MasonryLayoutInfo, Mason
 import type { VirtualAnchor, VirtualConfig, VirtualRange } from "./virtual";
 import * as React from "react";
 import { useComposedRefs } from "../shared/compose-refs";
-import { getOwnerWindow, getScrollParent, isScrollContainer, reorderByDocumentPosition, sortByDocumentPosition } from "../shared/dom";
+import { getOwnerWindow, getScrollParent, isScrollContainer, sortByDocumentPosition } from "../shared/dom";
 import { renderSynchronously } from "../shared/flush";
 import { Primitive } from "../shared/primitive";
+import { useRegistry } from "../shared/registry";
 import { measureElementSize, observeElementSize } from "../shared/resize-observer";
 import { onScrollFrame } from "../shared/scroll";
 import { useStableCallback } from "../shared/use-stable-callback";
@@ -182,7 +183,7 @@ function MasonryList(props: MasonryProps): React.ReactNode {
 
   const [root, setRoot] = React.useState<HTMLDivElement | null>(null);
   const composedRef = useComposedRefs(ref, setRoot);
-  const [items, setItems] = React.useState<readonly ItemEntry[]>([]);
+  const [items, registerItem, refreshItems] = useRegistry<ItemEntry>(sortByDocumentPosition);
   const [layout, setLayout] = React.useState<Layout | null>(null);
   // Counts size changes of the root and the items; each one places the items again.
   const [resizeCount, setResizeCount] = React.useState(0);
@@ -298,14 +299,14 @@ function MasonryList(props: MasonryProps): React.ReactNode {
       ));
       if (moved || reordered) {
         renderSynchronously(() => {
-          setItems(reorderByDocumentPosition);
+          refreshItems();
           setResizeCount(count => count + 1);
         });
       }
     });
     observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["style", "class"] });
     return () => observer.disconnect();
-  }, [root]);
+  }, [root, refreshItems]);
 
   const handleLayout = useStableCallback(onLayout);
   const reportedRef = React.useRef<string | null>(null);
@@ -327,11 +328,6 @@ function MasonryList(props: MasonryProps): React.ReactNode {
       handleLayout(info);
     }
   }, [root, layout, resizeCount, handleLayout]);
-
-  const registerItem = React.useCallback((entry: ItemEntry) => {
-    setItems(current => sortByDocumentPosition([...current, entry]));
-    return () => setItems(current => current.filter(existing => existing !== entry));
-  }, []);
 
   const placements = layout?.placements ?? null;
   const placementOf = React.useCallback(

@@ -49,7 +49,20 @@ export function getScrollParent(element: Element): HTMLElement | null {
   return null;
 }
 
+/**
+ * Entries in the order of their elements in the document. Elements that share a parent, as the
+ * items of a layout usually do, are put in order by one pass over its children.
+ */
 export function sortByDocumentPosition<T extends { element: Element }>(entries: readonly T[]): T[] {
+  const parent = entries[0]?.element.parentNode;
+  if (parent && entries.every(entry => entry.element.parentNode === parent)) {
+    const positions = new Map<Element, number>();
+    let position = 0;
+    for (const child of parent.children) {
+      positions.set(child, position++);
+    }
+    return [...entries].sort((a, b) => positions.get(a.element)! - positions.get(b.element)!);
+  }
   return [...entries].sort((a, b) => {
     if (a.element === b.element) {
       return 0;
