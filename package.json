@@ -33,6 +33,7 @@
   "sideEffects": false,
   "exports": {
     ".": "./dist/index.js",
+    "./grid": "./dist/grid.js",
     "./masonry": "./dist/masonry.js",
     "./overflow": "./dist/overflow.js",
     "./scroll-spy": "./dist/scroll-spy.js",
