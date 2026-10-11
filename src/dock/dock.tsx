@@ -1,36 +1,53 @@
 "use client";
 
 import type { PrimitiveProps } from "../shared/primitive";
-import type { Point } from "../shared/types";
+import type { Point, Size } from "../shared/types";
 import type {
   DockApi,
   DockContextValue,
   DockGroupRenderProps,
   DockPanelDefinition,
+  DockStripTabRenderProps,
+  DockTabOverflowRenderProps,
   DockTabRenderProps,
   DragState,
   GroupElements,
 } from "./context";
 import type { Popout } from "./hosts";
-import type { DockAction, DockFloating, DockGroup, DockGroupPlace, DockLayout, DockNode, DockPopout, DockRect, DockSide, DockSplit } from "./types";
-import type { DockGeometry, DropZone, GroupGeometry } from "./zones";
+import type { DockAction, DockAutoHide, DockFloating, DockGroup, DockGroupPlace, DockLayout, DockNode, DockRect, DockSide, DockSplit } from "./types";
+import type { DockGeometry, DropZone, GroupGeometry, TabGeometry } from "./zones";
 import * as React from "react";
 import { createPortal } from "react-dom";
 import { announce } from "../shared/announce";
 import { useComposedRefs } from "../shared/compose-refs";
 import { getOwnerWindow } from "../shared/dom";
-import { isPrimaryPointerDown, startDragSession } from "../shared/drag";
+import { holdTouchScrolling, startDragSession } from "../shared/drag";
 import { renderSynchronously } from "../shared/flush";
 import { clamp } from "../shared/math";
 import { Primitive } from "../shared/primitive";
-import { observeElementSize } from "../shared/resize-observer";
-import { revealWithin } from "../shared/scroll";
+import { measureElementSize, observeElementSize } from "../shared/resize-observer";
+import { DEFAULT_TOUCH_MARGIN } from "../shared/touch-reach";
 import { useControllableState } from "../shared/use-controllable-state";
 import { useStableCallback } from "../shared/use-stable-callback";
-import { DRAG_THRESHOLD, FLOAT_SIZE, KEYBOARD_SHARE, MIN_SHARE, ROOT_NAME } from "./constants";
-import { DockContext, useDockContext } from "./context";
+import {
+  DRAG_THRESHOLD,
+  EDGE_CONTACT,
+  FLOAT_SIZE,
+  FLOATING_LAYER,
+  FLYOUT_KEEP,
+  FLYOUT_LAYER,
+  KEYBOARD_SHARE,
+  KEYBOARD_STEP,
+  MIN_AUTO_HIDE_SIZE,
+  MIN_SHARE,
+  ROOT_NAME,
+  TOUCH_DRAG_THRESHOLD,
+  TOUCH_HOLD_DELAY,
+} from "./constants";
+import { DockContext } from "./context";
 import { elementId, openPopout, windowRect } from "./hosts";
-import { dockReducer, EMPTY_LAYOUT, findGroup, groupOfPanel, groupsOf, panelsOf, placeOf, validateLayout } from "./model";
+import { autoHiddenOf, dockReducer, EMPTY_LAYOUT, findGroup, groupOfPanel, groupsOf, panelsOf, placeOf, runsVertically, validateLayout } from "./model";
+import { FloatingView, FlyoutView, GroupView, NodeView, PopoutView, StripView } from "./parts";
 import { resolveDropZone } from "./zones";
 
 /** The smallest size of a floating group, in pixels. */
@@ -41,8 +58,11 @@ const FLOAT_KEEP = 60;
 const POPOUT_OFFSET = 80;
 const POPOUT_SIZE = { width: 640, height: 480 };
 const POPOUT_RESIZE_DELAY = 200;
+/** Where a keyboard choice to hide along an edge without a strip yet shows its indicator, in pixels from the edge. */
+const STRIP_INDICATOR = 24;
 
 const SIDE_WORDS: Record<DockSide, string> = { top: "above it", bottom: "below it", start: "before it", end: "after it" };
+const SIDES: readonly DockSide[] = ["start", "end", "top", "bottom"];
 
 interface Docking {
   panel: string;
@@ -64,6 +84,42 @@ function mainGroupsOf(node: DockNode | null): DockGroup[] {
     return [];
   }
   return node.type === "group" ? [node] : node.children.flatMap(mainGroupsOf);
+}
+
+/** The tabs of a group that show in its tab bar, with their places among its panels. */
+function visibleTabs(group: DockGroup, tabBar: Element, rect: (element: Element) => DockRect): TabGeometry[] {
+  return [...tabBar.querySelectorAll<HTMLElement>(":scope > [data-dock-tab]:not([data-overflow])")]
+    .map(tab => ({ rect: rect(tab), index: group.panels.indexOf(tab.dataset.panel!) }));
+}
+
+/**
+ * The edge of the main surface, `outer`, that a group at `inner` hides along: a group as tall as
+ * the surface goes to the nearer side, one as wide as it to the nearer of the top and the bottom,
+ * the way editors hide their side bars and panels; any other group goes to its nearest edge.
+ */
+function edgeToHideAlong(inner: DOMRect, outer: DOMRect, rtl: boolean): DockSide {
+  const distances: [DockSide, number][] = [
+    [rtl ? "end" : "start", inner.left - outer.left],
+    [rtl ? "start" : "end", outer.right - inner.right],
+    ["top", inner.top - outer.top],
+    ["bottom", outer.bottom - inner.bottom],
+  ];
+  const touches = (index: number): boolean => distances[index]![1] <= EDGE_CONTACT;
+  const tall = touches(2) && touches(3);
+  const wide = touches(0) && touches(1);
+  const candidates = tall === wide ? distances : distances.filter(([side]) => runsVertically(side) === tall);
+  return candidates.reduce((best, entry) => (entry[1] < best[1] ? entry : best))[0];
+}
+
+/** Which way, along the pointer's axis, makes a revealed hidden group bigger: away from its edge. */
+function growSign(side: DockSide, rtl: boolean): number {
+  if (side === "top") {
+    return 1;
+  }
+  if (side === "bottom") {
+    return -1;
+  }
+  return (side === "start") === !rtl ? 1 : -1;
 }
 
 function defaultRenderTab({ title, closable, close }: DockTabRenderProps): React.ReactNode {
@@ -89,6 +145,14 @@ function defaultRenderTab({ title, closable, close }: DockTabRenderProps): React
   );
 }
 
+function defaultRenderStripTab({ title }: DockStripTabRenderProps): React.ReactNode {
+  return <span data-dock-strip-title="">{title}</span>;
+}
+
+function defaultRenderTabOverflow({ panels }: DockTabOverflowRenderProps): React.ReactNode {
+  return `+${panels.length}`;
+}
+
 export interface DockProps extends Omit<PrimitiveProps<"div">, "asChild"> {
   /** Every panel the layout may place, by id. */
   panels: Readonly<Record<string, DockPanelDefinition>>;
@@ -97,19 +161,29 @@ export interface DockProps extends Omit<PrimitiveProps<"div">, "asChild"> {
   onLayoutChange?: (layout: DockLayout, action: DockAction) => void;
   /** What a tab shows inside it; by default the title and, for panels that close, a close button. */
   renderTab?: (tab: DockTabRenderProps) => React.ReactNode;
-  /** Controls after a group's tabs, such as buttons to maximize, float or pop the group out. */
+  /** What the button of a panel hidden along an edge shows; by default its title. */
+  renderStripTab?: (tab: DockStripTabRenderProps) => React.ReactNode;
+  /** What the button that lists the tabs that do not fit shows; by default how many there are. */
+  renderTabOverflow?: (overflow: DockTabOverflowRenderProps) => React.ReactNode;
+  /** Controls after a group's tabs, such as buttons to maximize, float, hide or pop the group out. */
   renderGroupControls?: (group: DockGroupRenderProps) => React.ReactNode;
-  /** Names the separators between groups. @default "Resize" */
+  /** Names the separators between groups and at the inner edge of revealed hidden groups. @default "Resize" */
   handleLabel?: string;
+  /** Names the strips that hold the buttons of panels hidden along the edges. @default "Hidden panels" */
+  stripLabel?: string;
+  /** Names the button and the menu that list the tabs that do not fit. @default "More tabs" */
+  tabOverflowLabel?: string;
+  /** How far beyond a separator or a resize corner, in pixels, a touch still takes it. @default 12 */
+  touchMargin?: number;
   /** The size of a group that starts floating. @default { width: 360, height: 260 } */
   floatSize?: { width: number; height: number };
 }
 
 /**
- * Panels in tab groups that split the main surface, float above it or open in windows of their
- * own, rearranged by dragging tabs or with the keyboard. The layout is plain data. Panel content
- * renders once and keeps its state wherever the panel goes, and fills its group's content
- * element once the dock has mounted.
+ * Panels in tab groups that split the main surface, float above it, hide along its edges or open
+ * in windows of their own, rearranged by dragging tabs or with the keyboard. The layout is plain
+ * data. Panel content renders once and keeps its state wherever the panel goes, and fills its
+ * group's content element once the dock has mounted.
  */
 function Dock(props: DockProps): React.ReactNode {
   const {
@@ -118,8 +192,13 @@ function Dock(props: DockProps): React.ReactNode {
     defaultLayout = EMPTY_LAYOUT,
     onLayoutChange,
     renderTab = defaultRenderTab,
+    renderStripTab = defaultRenderStripTab,
+    renderTabOverflow = defaultRenderTabOverflow,
     renderGroupControls,
     handleLabel = "Resize",
+    stripLabel = "Hidden panels",
+    tabOverflowLabel = "More tabs",
+    touchMargin = DEFAULT_TOUCH_MARGIN,
     floatSize = FLOAT_SIZE,
     ref,
     style,
@@ -142,6 +221,7 @@ function Dock(props: DockProps): React.ReactNode {
   const surfaceRef = React.useRef<HTMLDivElement>(null);
   const overlayRef = React.useRef<HTMLDivElement>(null);
   const groupElementsRef = React.useRef(new Map<string, GroupElements>());
+  const stripElementsRef = React.useRef(new Map<DockSide, HTMLElement>());
   const [hosts, setHosts] = React.useState<ReadonlyMap<string, HTMLElement>>(() => new Map());
   const [drag, setDrag] = React.useState<DragState | null>(null);
   const dragRef = React.useRef<DragState | null>(null);
@@ -154,6 +234,19 @@ function Dock(props: DockProps): React.ReactNode {
   const [popoutContainers, setPopoutContainers] = React.useState<ReadonlyMap<string, HTMLElement>>(() => new Map());
   // Size changes of group content render again, which places overlay panels again.
   const [, relayout] = React.useReducer((count: number) => count + 1, 0);
+
+  const autoHidden = autoHiddenOf(layout);
+  const [revealedState, setRevealedState] = React.useState<string | null>(null);
+  const revealedEntry = revealedState === null ? undefined : autoHidden.find(entry => entry.group.id === revealedState);
+  if (revealedState !== null && !revealedEntry) {
+    // The revealed group left its edge, or closed; nothing shows any more.
+    setRevealedState(null);
+  }
+  const revealed = revealedEntry ? revealedState : null;
+  const revealedRef = React.useRef(revealed);
+  React.useLayoutEffect(() => {
+    revealedRef.current = revealed;
+  });
 
   // Event handlers read these before React renders them.
   const applyDrag = React.useCallback((next: DragState | null) => {
@@ -204,6 +297,14 @@ function Dock(props: DockProps): React.ReactNode {
     });
   });
 
+  const reveal = React.useCallback((group: string | null) => {
+    if (group !== null && placeOf(layoutRef.current, group) !== "autoHide") {
+      throw new Error(`${ROOT_NAME} reveals only groups hidden along an edge, and "${group}" is not one.`);
+    }
+    revealedRef.current = group;
+    setRevealedState(group);
+  }, []);
+
   const api = React.useMemo((): DockApi => ({
     layout,
     dispatch,
@@ -240,14 +341,33 @@ function Dock(props: DockProps): React.ReactNode {
       dispatch(action);
     },
     dock: (group) => {
-      const place = placeOf(layoutRef.current, group);
+      const current = layoutRef.current;
+      const place = placeOf(current, group);
       if (place === "popout") {
         dispatch({ type: "return", group });
       } else if (place === "floating") {
         dispatch({ type: "moveGroup", group, to: { type: "edge", side: "end" } });
+      } else if (place === "autoHide") {
+        const side = autoHiddenOf(current).find(entry => entry.group.id === group)!.side;
+        dispatch({ type: "moveGroup", group, to: { type: "edge", side } });
       }
     },
-  }), [layout, dispatch, root, floatSize, watchPopout, titleOf]);
+    autoHide: (group, side) => {
+      const elements = groupElementsRef.current.get(group);
+      if (!root || !findGroup(layoutRef.current, group)) {
+        throw new Error(`${ROOT_NAME} has no group "${group}".`);
+      }
+      const rect = elements && elements.group.ownerDocument === root.ownerDocument ? elements.group.getBoundingClientRect() : null;
+      const surface = surfaceRef.current!.getBoundingClientRect();
+      const chosen = side ?? (rect ? edgeToHideAlong(rect, surface, isRightToLeft(root)) : "end");
+      // The group keeps its size, as far as the surface leaves room for it.
+      const room = (runsVertically(chosen) ? surface.width : surface.height) - FLYOUT_KEEP;
+      const size = rect ? Math.min(runsVertically(chosen) ? rect.width : rect.height, room) : undefined;
+      dispatch({ type: "moveGroup", group, to: { type: "autoHide", side: chosen, size: size === undefined ? undefined : Math.max(MIN_AUTO_HIDE_SIZE, Math.round(size)) } });
+    },
+    revealed,
+    reveal,
+  }), [layout, dispatch, root, floatSize, watchPopout, titleOf, revealed, reveal]);
 
   // Panel content renders into a host element of its own, which moves to whichever group shows it.
   React.useLayoutEffect(() => {
@@ -344,7 +464,7 @@ function Dock(props: DockProps): React.ReactNode {
           overlayRef.current.append(host);
         }
         const floatingIndex = layout.floating.findIndex(entry => entry.group.id === group?.id);
-        host.style.zIndex = String(floatingIndex === -1 ? 1 : 3 + floatingIndex * 2 + 1);
+        host.style.zIndex = String(place === "autoHide" ? FLYOUT_LAYER + 1 : floatingIndex === -1 ? 1 : FLOATING_LAYER + floatingIndex * 2 + 1);
         if (elements && active) {
           const rect = relativeRect(elements.content.getBoundingClientRect(), rootRect);
           host.style.inset = "auto";
@@ -391,46 +511,85 @@ function Dock(props: DockProps): React.ReactNode {
       observing = false;
       stops.forEach(stop => stop());
     };
-  }, [layout, hosts]);
+  }, [layout, hosts, revealed]);
 
-  // Focus follows a panel the keyboard moved, selected or closed.
+  // Focus follows a panel the keyboard moved, selected or closed. A tab still waiting in its
+  // group's overflow menu takes focus itself once it shows.
   React.useLayoutEffect(() => {
     const panel = focusRef.current;
-    focusRef.current = null;
     if (!panel || !root) {
       return;
     }
     const id = elementId(`${dockId}-tab`, panel);
     const documents = [root.ownerDocument, ...[...popoutsRef.current.values()].map(popout => popout.window.document)];
-    documents.map(document => document.getElementById(id)).find(Boolean)?.focus();
+    const tab = documents.map(document => document.getElementById(id)).find(Boolean);
+    if (tab?.dataset.overflow === undefined) {
+      focusRef.current = null;
+      tab?.focus();
+    }
   });
+
+  // Touch drags that begin with a held finger keep the page from scrolling while they go on.
+  React.useEffect(() => (root ? holdTouchScrolling(root) : undefined), [root]);
+
+  // A revealed hidden group goes away when the reader turns to anything else.
+  React.useEffect(() => {
+    if (!revealed || !root) {
+      return;
+    }
+    const ownerDocument = root.ownerDocument;
+    const inside = (target: EventTarget | null): boolean => {
+      if (!(target instanceof Node)) {
+        return false;
+      }
+      const flyout = root.querySelector("[data-dock-flyout]");
+      // Overlay panels of the revealed group are drawn over it from outside its element.
+      const shownPanels = findGroup(layoutRef.current, revealed)?.panels ?? [];
+      return Boolean(flyout?.contains(target))
+        || [...stripElementsRef.current.values()].some(strip => strip.contains(target))
+        || shownPanels.some(panel => hosts.get(panel)?.contains(target));
+    };
+    const handleOutside = (event: Event): void => {
+      if (!inside(event.target) && !dragRef.current) {
+        reveal(null);
+      }
+    };
+    ownerDocument.addEventListener("pointerdown", handleOutside, true);
+    ownerDocument.addEventListener("focusin", handleOutside);
+    return () => {
+      ownerDocument.removeEventListener("pointerdown", handleOutside, true);
+      ownerDocument.removeEventListener("focusin", handleOutside);
+    };
+  }, [revealed, root, reveal, hosts]);
 
   const geometryOf = (exclude: string | null): DockGeometry => {
     const current = layoutRef.current;
     const rootRect = root!.getBoundingClientRect();
+    const rect = (element: Element): DockRect => relativeRect(element.getBoundingClientRect(), rootRect);
     const describe = (group: DockGroup, place: DockGroupPlace): GroupGeometry[] => {
       const elements = groupElementsRef.current.get(group.id);
       if (!elements || group.id === exclude || elements.group.ownerDocument !== root!.ownerDocument) {
         return [];
       }
-      const rect = (element: Element): DockRect => relativeRect(element.getBoundingClientRect(), rootRect);
-      const tabs = [...elements.tabBar.querySelectorAll<HTMLElement>("[data-dock-tab]")].map(rect);
-      return [{ id: group.id, place, rect: rect(elements.group), tabBar: rect(elements.tabBar), content: rect(elements.content), tabs }];
+      return [{ id: group.id, place, rect: rect(elements.group), tabBar: rect(elements.tabBar), content: rect(elements.content), tabs: visibleTabs(group, elements.tabBar, rect) }];
     };
     const maximized = current.maximized ? findGroup(current, current.maximized) : undefined;
+    const shown = revealedRef.current ? findGroup(current, revealedRef.current) : undefined;
     return {
-      surface: relativeRect(surfaceRef.current!.getBoundingClientRect(), rootRect),
+      surface: rect(surfaceRef.current!),
       surfaceEmpty: current.root === null,
       groups: [
         ...[...current.floating].reverse().flatMap(entry => describe(entry.group, "floating")),
+        ...(shown ? describe(shown, "autoHide") : []),
         ...(maximized ? [maximized] : mainGroupsOf(current.root)).flatMap(group => describe(group, "main")),
       ],
+      strips: [...stripElementsRef.current].map(([side, element]) => ({ side, rect: rect(element) })),
       bounds: { x: 0, y: 0, width: rootRect.width, height: rootRect.height },
       rtl: isRightToLeft(root!),
     };
   };
 
-  /** While a group is maximized, a drop can only join a group or float. */
+  /** While a group is maximized, a drop can only join a group, hide along an edge or float. */
   const allowed = (zone: DropZone | null): DropZone | null => (
     zone && layoutRef.current.maximized !== null && (zone.target.type === "edge" || zone.target.type === "split") ? null : zone
   );
@@ -446,7 +605,7 @@ function Dock(props: DockProps): React.ReactNode {
     return dragged;
   }, []);
 
-  const beginTabDrag = useStableCallback((group: DockGroup, panel: string, event: React.PointerEvent<HTMLElement>) => {
+  const beginTabDrag = useStableCallback((group: DockGroup, panel: string, event: PointerEvent, element: HTMLElement) => {
     draggedRef.current = null;
     if (!root || dragRef.current || dockingRef.current) {
       return;
@@ -460,13 +619,14 @@ function Dock(props: DockProps): React.ReactNode {
       // In a popout window a tab only moves among its group's tabs.
       const elements = groupElementsRef.current.get(group.id)!;
       const origin = elements.group.getBoundingClientRect();
-      const rect = (element: Element): DockRect => relativeRect(element.getBoundingClientRect(), origin);
+      const rect = (target: Element): DockRect => relativeRect(target.getBoundingClientRect(), origin);
       const zone = resolveDropZone(
         { x: moveEvent.clientX - origin.left, y: moveEvent.clientY - origin.top },
         {
           surface: { x: -1e6, y: -1e6, width: 0, height: 0 },
           surfaceEmpty: false,
-          groups: [{ id: group.id, place: "popout", rect: rect(elements.group), tabBar: rect(elements.tabBar), content: rect(elements.content), tabs: [...elements.tabBar.querySelectorAll("[data-dock-tab]")].map(rect) }],
+          groups: [{ id: group.id, place: "popout", rect: rect(elements.group), tabBar: rect(elements.tabBar), content: rect(elements.content), tabs: visibleTabs(group, elements.tabBar, rect) }],
+          strips: [],
           bounds: rect(elements.group),
           rtl: isRightToLeft(elements.group),
         },
@@ -475,7 +635,14 @@ function Dock(props: DockProps): React.ReactNode {
       );
       return zone?.target.type === "group" ? zone : null;
     };
-    startDragSession(event.nativeEvent, { threshold: DRAG_THRESHOLD, cursor: "grabbing", captureElement: event.currentTarget }, {
+    startDragSession(event, {
+      threshold: DRAG_THRESHOLD,
+      cursor: "grabbing",
+      captureElement: element,
+      touch: { threshold: TOUCH_DRAG_THRESHOLD, delay: TOUCH_HOLD_DELAY },
+      // A touch that goes up or down scrolls the page; across, it drags at once, and held it drags anywhere.
+      shouldStart: delta => event.pointerType !== "touch" || Math.abs(delta.x) > Math.abs(delta.y),
+    }, {
       onStart: () => {
         draggedRef.current = panel;
         renderSynchronously(() => applyDrag({ kind: "panel", panel, group: group.id, zone: null }));
@@ -498,14 +665,14 @@ function Dock(props: DockProps): React.ReactNode {
     });
   });
 
-  const beginGroupDrag = useStableCallback((group: DockGroup, event: React.PointerEvent<HTMLElement>) => {
+  const beginGroupDrag = useStableCallback((group: DockGroup, event: PointerEvent, element: HTMLElement) => {
     const entry = layoutRef.current.floating.find(floating => floating.group.id === group.id);
     if (!root || !entry || dragRef.current) {
       return;
     }
     const start = entry.rect;
     const origin = { x: event.clientX, y: event.clientY };
-    startDragSession(event.nativeEvent, { threshold: DRAG_THRESHOLD, cursor: "grabbing", captureElement: event.currentTarget }, {
+    startDragSession(event, { threshold: DRAG_THRESHOLD, cursor: "grabbing", captureElement: element }, {
       onStart: () => renderSynchronously(() => applyDrag({ kind: "group", group: group.id, zone: null, rect: start })),
       onMove: (moveEvent) => {
         const bounds = root.getBoundingClientRect();
@@ -538,7 +705,7 @@ function Dock(props: DockProps): React.ReactNode {
     });
   });
 
-  const beginFloatResize = useStableCallback((group: DockGroup, event: React.PointerEvent<HTMLElement>) => {
+  const beginFloatResize = useStableCallback((group: DockGroup, event: PointerEvent, element: HTMLElement) => {
     const entry = layoutRef.current.floating.find(floating => floating.group.id === group.id);
     if (!root || !entry || dragRef.current) {
       return;
@@ -546,7 +713,7 @@ function Dock(props: DockProps): React.ReactNode {
     const start = entry.rect;
     const origin = { x: event.clientX, y: event.clientY };
     const rtl = isRightToLeft(root);
-    startDragSession(event.nativeEvent, { threshold: 0, cursor: rtl ? "nesw-resize" : "nwse-resize", captureElement: event.currentTarget }, {
+    startDragSession(event, { threshold: 0, cursor: rtl ? "nesw-resize" : "nwse-resize", captureElement: element }, {
       onMove: (moveEvent) => {
         const dx = moveEvent.clientX - origin.x;
         // The handle sits at the bottom of the inline end, which is the left in right to left.
@@ -574,18 +741,18 @@ function Dock(props: DockProps): React.ReactNode {
     return sizes.map((size, position) => (position === index ? before : position === index + 1 ? pair - before : size));
   };
 
-  const beginSplitResize = useStableCallback((split: DockSplit, index: number, event: React.PointerEvent<HTMLElement>) => {
-    const element = event.currentTarget.parentElement;
-    if (!element || dragRef.current) {
+  const beginSplitResize = useStableCallback((split: DockSplit, index: number, event: PointerEvent, element: HTMLElement) => {
+    const container = element.parentElement;
+    if (!container || dragRef.current) {
       return;
     }
     const horizontal = split.orientation === "horizontal";
-    const rect = element.getBoundingClientRect();
+    const rect = container.getBoundingClientRect();
     const length = horizontal ? rect.width : rect.height;
-    const flip = horizontal && isRightToLeft(element) ? -1 : 1;
+    const flip = horizontal && isRightToLeft(container) ? -1 : 1;
     const origin = { x: event.clientX, y: event.clientY };
     const start = [...split.sizes];
-    startDragSession(event.nativeEvent, { threshold: 0, cursor: horizontal ? "col-resize" : "row-resize", captureElement: event.currentTarget }, {
+    startDragSession(event, { threshold: 0, cursor: horizontal ? "col-resize" : "row-resize", captureElement: element }, {
       onMove: (moveEvent) => {
         const delta = horizontal ? (moveEvent.clientX - origin.x) * flip : moveEvent.clientY - origin.y;
         renderSynchronously(() => applyDrag({ kind: "split", split: split.id, sizes: resizedPair(split, index, start, delta / length) }));
@@ -596,6 +763,39 @@ function Dock(props: DockProps): React.ReactNode {
           applyDrag(null);
           if (current?.kind === "split") {
             dispatch({ type: "resize", split: split.id, sizes: current.sizes });
+          }
+        });
+      },
+      onCancel: () => renderSynchronously(() => applyDrag(null)),
+    });
+  });
+
+  /** The largest size a revealed hidden group along `side` may take, leaving some of the main surface showing. */
+  const largestFlyout = (side: DockSide): number => {
+    const surface = surfaceRef.current!.getBoundingClientRect();
+    return Math.max(MIN_AUTO_HIDE_SIZE, (runsVertically(side) ? surface.width : surface.height) - FLYOUT_KEEP);
+  };
+
+  const beginFlyoutResize = useStableCallback((entry: DockAutoHide, event: PointerEvent, element: HTMLElement) => {
+    if (!root || dragRef.current) {
+      return;
+    }
+    const vertical = runsVertically(entry.side);
+    const sign = growSign(entry.side, isRightToLeft(root));
+    const largest = largestFlyout(entry.side);
+    const origin = vertical ? event.clientX : event.clientY;
+    const start = Math.min(entry.size, largest);
+    startDragSession(event, { threshold: 0, cursor: vertical ? "col-resize" : "row-resize", captureElement: element }, {
+      onMove: (moveEvent) => {
+        const delta = ((vertical ? moveEvent.clientX : moveEvent.clientY) - origin) * sign;
+        renderSynchronously(() => applyDrag({ kind: "flyout", group: entry.group.id, size: clamp(start + delta, MIN_AUTO_HIDE_SIZE, largest) }));
+      },
+      onEnd: () => {
+        const current = dragRef.current;
+        renderSynchronously(() => {
+          applyDrag(null);
+          if (current?.kind === "flyout") {
+            dispatch({ type: "size", group: entry.group.id, size: Math.round(current.size) });
           }
         });
       },
@@ -618,10 +818,25 @@ function Dock(props: DockProps): React.ReactNode {
     dispatch({ type: "resize", split: split.id, sizes: resizedPair(split, index, split.sizes, share) });
   });
 
+  const handleFlyoutKey = useStableCallback((entry: DockAutoHide, event: React.KeyboardEvent<HTMLElement>) => {
+    const vertical = runsVertically(entry.side);
+    const sign = growSign(entry.side, isRightToLeft(event.currentTarget));
+    const keys: Record<string, number> = vertical
+      ? { ArrowLeft: -KEYBOARD_STEP * sign, ArrowRight: KEYBOARD_STEP * sign }
+      : { ArrowUp: -KEYBOARD_STEP * sign, ArrowDown: KEYBOARD_STEP * sign };
+    const largest = largestFlyout(entry.side);
+    const size = event.key === "Home" ? MIN_AUTO_HIDE_SIZE : event.key === "End" ? largest : keys[event.key] === undefined ? undefined : entry.size + keys[event.key]!;
+    if (size === undefined) {
+      return;
+    }
+    event.preventDefault();
+    dispatch({ type: "size", group: entry.group.id, size: Math.round(clamp(size, MIN_AUTO_HIDE_SIZE, largest)) });
+  });
+
   const choicesFor = (group: DockGroup): Docking["choices"] => {
     const geometry = geometryOf(null);
     const titleOfGroup = (id: string): string => titleOf(findGroup(layoutRef.current, id)?.active ?? id);
-    // Joining another group comes first, then splitting one, then the edges and floating.
+    // Joining another group comes first, then splitting one, then the edges, hiding along them and floating.
     const choices: Docking["choices"] = geometry.groups
       .filter(target => target.id !== group.id)
       .map(target => ({ zone: { target: { type: "group", group: target.id }, indicator: target.content }, label: `With ${titleOfGroup(target.id)}` }));
@@ -639,8 +854,8 @@ function Dock(props: DockProps): React.ReactNode {
         choices.push({ zone: { target: { type: "split", group: target.id, side }, indicator }, label: `Beside ${titleOfGroup(target.id)}, ${SIDE_WORDS[side]}` });
       }
     }
+    const { surface, bounds } = geometry;
     if (layoutRef.current.maximized === null) {
-      const { surface } = geometry;
       const share = 0.25;
       const edges: [DockSide, DockRect][] = [
         ["top", { ...surface, height: surface.height * share }],
@@ -652,9 +867,21 @@ function Dock(props: DockProps): React.ReactNode {
         choices.push({ zone: { target: { type: "edge", side }, indicator }, label: `Along the ${side} edge` });
       }
     }
-    const width = Math.min(floatSize.width, geometry.bounds.width);
-    const height = Math.min(floatSize.height, geometry.bounds.height);
-    const rect = { x: (geometry.bounds.width - width) / 2, y: (geometry.bounds.height - height) / 2, width, height };
+    const left = geometry.rtl ? "end" : "start";
+    for (const side of SIDES) {
+      const strip = geometry.strips.find(entry => entry.side === side)?.rect;
+      const indicator = strip ?? (
+        side === "top"
+          ? { ...bounds, height: STRIP_INDICATOR }
+          : side === "bottom"
+            ? { ...bounds, y: bounds.height - STRIP_INDICATOR, height: STRIP_INDICATOR }
+            : side === left ? { ...bounds, width: STRIP_INDICATOR } : { ...bounds, x: bounds.width - STRIP_INDICATOR, width: STRIP_INDICATOR }
+      );
+      choices.push({ zone: { target: { type: "autoHide", side }, indicator }, label: `Hidden along the ${side} edge` });
+    }
+    const width = Math.min(floatSize.width, bounds.width);
+    const height = Math.min(floatSize.height, bounds.height);
+    const rect = { x: (bounds.width - width) / 2, y: (bounds.height - height) / 2, width, height };
     choices.push({ zone: { target: { type: "float", rect }, indicator: rect }, label: "Floating" });
     return choices;
   };
@@ -732,11 +959,33 @@ function Dock(props: DockProps): React.ReactNode {
     }
   });
 
+  const toggleStripTab = useStableCallback((group: DockGroup, panel: string, moveFocus: boolean) => {
+    if (revealedRef.current === group.id && group.active === panel) {
+      reveal(null);
+      return;
+    }
+    if (group.active !== panel) {
+      dispatch({ type: "activate", panel });
+    }
+    if (moveFocus) {
+      focusRef.current = panel;
+    }
+    reveal(group.id);
+  });
+
   const registerGroup = React.useCallback((group: string, elements: GroupElements | null) => {
     if (elements) {
       groupElementsRef.current.set(group, elements);
     } else {
       groupElementsRef.current.delete(group);
+    }
+  }, []);
+
+  const registerStrip = React.useCallback((side: DockSide, element: HTMLElement | null) => {
+    if (element) {
+      stripElementsRef.current.set(side, element);
+    } else {
+      stripElementsRef.current.delete(side);
     }
   }, []);
 
@@ -748,6 +997,22 @@ function Dock(props: DockProps): React.ReactNode {
     (entry: DockFloating) => ((drag?.kind === "group" || drag?.kind === "resize") && drag.group === entry.group.id ? drag.rect : entry.rect),
     [drag],
   );
+  // A revealed hidden group takes no more of the main surface than resizing it could, whatever size it kept.
+  const [surfaceSize, setSurfaceSize] = React.useState<Size | null>(null);
+  React.useLayoutEffect(() => {
+    const surface = surfaceRef.current!;
+    // Measuring in a layout effect sizes a group revealed from the start before the first paint.
+    setSurfaceSize(measureElementSize(surface));
+    return observeElementSize(surface, size => renderSynchronously(() => setSurfaceSize(size)));
+  }, []);
+  const flyoutSize = React.useCallback((entry: DockAutoHide) => {
+    const size = drag?.kind === "flyout" && drag.group === entry.group.id ? drag.size : entry.size;
+    if (!surfaceSize) {
+      return size;
+    }
+    const room = (runsVertically(entry.side) ? surfaceSize.width : surfaceSize.height) - FLYOUT_KEEP;
+    return Math.min(size, Math.max(MIN_AUTO_HIDE_SIZE, room));
+  }, [drag, surfaceSize]);
 
   const contextValue = React.useMemo((): DockContextValue => ({
     dockId,
@@ -756,21 +1021,32 @@ function Dock(props: DockProps): React.ReactNode {
     api,
     drag,
     docking: docking?.panel ?? null,
+    focusRef,
     handleLabel,
+    stripLabel,
+    tabOverflowLabel,
+    touchMargin,
     renderTab,
+    renderStripTab,
+    renderTabOverflow,
     renderGroupControls,
     registerGroup,
+    registerStrip,
     splitSizes,
     floatingRect,
+    flyoutSize,
     beginTabDrag,
     beginGroupDrag,
     beginFloatResize,
     beginSplitResize,
+    beginFlyoutResize,
     handleTabKey,
     handleTabBlur,
-    handleSplitKey,
     consumeDragClick,
-  }), [dockId, layout, panels, api, drag, docking, handleLabel, renderTab, renderGroupControls, registerGroup, splitSizes, floatingRect, beginTabDrag, beginGroupDrag, beginFloatResize, beginSplitResize, handleTabKey, handleTabBlur, handleSplitKey, consumeDragClick]);
+    handleSplitKey,
+    handleFlyoutKey,
+    toggleStripTab,
+  }), [dockId, layout, panels, api, drag, docking, handleLabel, stripLabel, tabOverflowLabel, touchMargin, renderTab, renderStripTab, renderTabOverflow, renderGroupControls, registerGroup, registerStrip, splitSizes, floatingRect, flyoutSize, beginTabDrag, beginGroupDrag, beginFloatResize, beginSplitResize, beginFlyoutResize, handleTabKey, handleTabBlur, consumeDragClick, handleSplitKey, handleFlyoutKey, toggleStripTab]);
 
   const zone = drag?.kind === "panel" || drag?.kind === "group" ? drag.zone : docking ? docking.choices[docking.index]!.zone : null;
   const maximized = layout.maximized ? findGroup(layout, layout.maximized) : undefined;
@@ -781,7 +1057,9 @@ function Dock(props: DockProps): React.ReactNode {
     if (!definition || !group) {
       return null;
     }
-    const shown = group.active === panel && (!maximized || maximized.id === group.id || placeOf(layout, group.id) !== "main");
+    const place = placeOf(layout, group.id);
+    const groupShown = place === "autoHide" ? revealed === group.id : !maximized || maximized.id === group.id || place !== "main";
+    const shown = group.active === panel && groupShown;
     const mode = definition.render ?? "keepAlive";
     const content = mode === "whenVisible"
       ? (shown ? definition.content : null)
@@ -791,6 +1069,7 @@ function Dock(props: DockProps): React.ReactNode {
     return <React.Fragment key={panel}>{createPortal(content, host)}</React.Fragment>;
   });
 
+  const sides = SIDES.filter(side => autoHidden.some(entry => entry.side === side));
   return (
     <DockContext value={contextValue}>
       <Primitive.div
@@ -801,8 +1080,27 @@ function Dock(props: DockProps): React.ReactNode {
         // Clipping without a scroll container, so focusing a part can never scroll the layout away.
         style={{ position: "relative", overflow: "clip", ...style }}
       >
-        <Primitive.div ref={surfaceRef} data-dock-surface="" data-maximized={maximized ? "" : undefined} style={{ position: "absolute", inset: 0, display: "flex" }}>
-          {maximized ? <GroupView group={maximized} place="main" /> : layout.root && <NodeView node={layout.root} />}
+        <Primitive.div
+          data-dock-frame=""
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "grid",
+            gridTemplateAreas: "\"start top end\" \"start surface end\" \"start bottom end\"",
+            gridTemplateColumns: "auto minmax(0, 1fr) auto",
+            gridTemplateRows: "auto minmax(0, 1fr) auto",
+          }}
+        >
+          {sides.map(side => <StripView key={side} side={side} entries={autoHidden.filter(entry => entry.side === side)} />)}
+          <Primitive.div
+            ref={surfaceRef}
+            data-dock-surface=""
+            data-maximized={maximized ? "" : undefined}
+            style={{ gridArea: "surface", position: "relative", display: "flex", minWidth: 0, minHeight: 0 }}
+          >
+            {maximized ? <GroupView group={maximized} place="main" /> : layout.root && <NodeView node={layout.root} />}
+            {revealedEntry && <FlyoutView entry={revealedEntry} />}
+          </Primitive.div>
         </Primitive.div>
         {layout.floating.map((entry, index) => <FloatingView key={entry.group.id} entry={entry} index={index} />)}
         <Primitive.div ref={overlayRef} data-dock-overlays="" style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
@@ -822,190 +1120,6 @@ function Dock(props: DockProps): React.ReactNode {
       {portals}
     </DockContext>
   );
-}
-
-function NodeView({ node }: { node: DockNode }): React.ReactNode {
-  return node.type === "group" ? <GroupView group={node} place="main" /> : <SplitView split={node} />;
-}
-
-function SplitView({ split }: { split: DockSplit }): React.ReactNode {
-  const context = useDockContext(ROOT_NAME);
-  const sizes = context.splitSizes(split);
-  const horizontal = split.orientation === "horizontal";
-  return (
-    <Primitive.div
-      data-dock-split=""
-      data-orientation={split.orientation}
-      style={{ display: "flex", flexDirection: horizontal ? "row" : "column", flex: "1 1 0px", minWidth: 0, minHeight: 0 }}
-    >
-      {split.children.map((child, index) => (
-        <React.Fragment key={child.id}>
-          {index > 0 && <SplitHandle split={split} index={index - 1} sizes={sizes} />}
-          <Primitive.div data-dock-pane="" style={{ display: "flex", flex: `${sizes[index]} 1 0px`, minWidth: 0, minHeight: 0, overflow: "clip" }}>
-            <NodeView node={child} />
-          </Primitive.div>
-        </React.Fragment>
-      ))}
-    </Primitive.div>
-  );
-}
-
-function SplitHandle({ split, index, sizes }: { split: DockSplit; index: number; sizes: number[] }): React.ReactNode {
-  const context = useDockContext(ROOT_NAME);
-  const horizontal = split.orientation === "horizontal";
-  const before = sizes[index]!;
-  const pair = before + sizes[index + 1]!;
-  const dragging = context.drag?.kind === "split" && context.drag.split === split.id;
-  return (
-    <Primitive.div
-      role="separator"
-      tabIndex={0}
-      aria-label={context.handleLabel}
-      aria-orientation={horizontal ? "vertical" : "horizontal"}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-valuenow={Math.round((before / pair) * 100)}
-      data-dock-handle=""
-      data-orientation={split.orientation}
-      data-state={dragging ? "dragging" : "idle"}
-      onPointerDown={(event) => {
-        if (isPrimaryPointerDown(event)) {
-          context.beginSplitResize(split, index, event);
-        }
-      }}
-      onKeyDown={event => context.handleSplitKey(split, index, event)}
-      style={{
-        flex: "0 0 var(--xlayout-dock-handle-size, 4px)",
-        touchAction: "none",
-        cursor: horizontal ? "col-resize" : "row-resize",
-      }}
-    />
-  );
-}
-
-function GroupView({ group, place }: { group: DockGroup; place: DockGroupPlace }): React.ReactNode {
-  const context = useDockContext(ROOT_NAME);
-  const groupRef = React.useRef<HTMLDivElement>(null);
-  const tabBarRef = React.useRef<HTMLDivElement>(null);
-  const contentRef = React.useRef<HTMLDivElement>(null);
-  const { registerGroup } = context;
-  React.useLayoutEffect(() => {
-    registerGroup(group.id, { group: groupRef.current!, tabBar: tabBarRef.current!, content: contentRef.current! });
-    return () => registerGroup(group.id, null);
-  }, [registerGroup, group.id]);
-  const maximized = context.layout.maximized === group.id;
-  const headerDrag = place === "floating"
-    ? (event: React.PointerEvent<HTMLDivElement>) => {
-        // Only the free space of the header moves the group; tabs and controls do their own thing.
-        if (isPrimaryPointerDown(event) && (event.target === event.currentTarget || event.target === tabBarRef.current)) {
-          context.beginGroupDrag(group, event);
-        }
-      }
-    : undefined;
-  return (
-    <Primitive.div
-      ref={groupRef}
-      data-dock-group=""
-      data-group={group.id}
-      data-place={place}
-      data-maximized={maximized ? "" : undefined}
-      style={{ display: "flex", flexDirection: "column", flex: "1 1 0px", minWidth: 0, minHeight: 0 }}
-    >
-      <Primitive.div data-dock-header="" onPointerDown={headerDrag} style={{ display: "flex", flex: "none", touchAction: place === "floating" ? "none" : undefined }}>
-        {/* Tabs that do not fit scroll within the bar, so they never run under the controls. */}
-        <Primitive.div ref={tabBarRef} role="tablist" aria-orientation="horizontal" data-dock-tablist="" style={{ display: "flex", flex: "1 1 auto", minWidth: 0, overflowX: "auto", overflowY: "hidden" }}>
-          {group.panels.map(panel => <Tab key={panel} group={group} panel={panel} />)}
-        </Primitive.div>
-        {context.renderGroupControls && (
-          <Primitive.div data-dock-controls="" style={{ display: "flex", flex: "none" }}>
-            {context.renderGroupControls({ group: group.id, place, panels: group.panels, active: group.active, maximized, api: context.api })}
-          </Primitive.div>
-        )}
-      </Primitive.div>
-      <Primitive.div ref={contentRef} data-dock-content="" style={{ position: "relative", flex: "1 1 0px", minHeight: 0 }} />
-    </Primitive.div>
-  );
-}
-
-function Tab({ group, panel }: { group: DockGroup; panel: string }): React.ReactNode {
-  const context = useDockContext(ROOT_NAME);
-  const tabRef = React.useRef<HTMLDivElement>(null);
-  const definition = context.panels[panel]!;
-  const active = group.active === panel;
-  const closable = definition.closable ?? true;
-  const dragging = context.drag?.kind === "panel" && context.drag.panel === panel;
-  React.useLayoutEffect(() => {
-    const element = tabRef.current!;
-    if (active) {
-      revealWithin(element, element.parentElement!);
-    }
-  }, [active]);
-  return (
-    <Primitive.div
-      ref={tabRef}
-      role="tab"
-      id={elementId(`${context.dockId}-tab`, panel)}
-      aria-selected={active}
-      aria-controls={elementId(`${context.dockId}-panel`, panel)}
-      aria-keyshortcuts="Alt+Shift+M Control+Shift+ArrowLeft Control+Shift+ArrowRight Delete"
-      tabIndex={active ? 0 : -1}
-      data-dock-tab=""
-      data-panel={panel}
-      data-state={active ? "active" : "inactive"}
-      data-dragging={dragging ? "" : undefined}
-      data-docking={context.docking === panel ? "" : undefined}
-      onPointerDown={(event) => {
-        if (isPrimaryPointerDown(event)) {
-          context.beginTabDrag(group, panel, event);
-        }
-      }}
-      onClick={() => {
-        if (!context.consumeDragClick(panel)) {
-          context.api.activate(panel);
-        }
-      }}
-      onKeyDown={event => context.handleTabKey(group, panel, event)}
-      onBlur={() => context.handleTabBlur(panel)}
-      style={{ flex: "none", touchAction: "none" }}
-    >
-      {context.renderTab({ panel, title: definition.title, active, closable, close: () => context.api.close(panel) })}
-    </Primitive.div>
-  );
-}
-
-function FloatingView({ entry, index }: { entry: DockFloating; index: number }): React.ReactNode {
-  const context = useDockContext(ROOT_NAME);
-  const rect = context.floatingRect(entry);
-  const raise = (): void => {
-    if (index < context.layout.floating.length - 1) {
-      context.api.dispatch({ type: "raise", group: entry.group.id });
-    }
-  };
-  return (
-    <Primitive.div
-      data-dock-floating=""
-      data-group={entry.group.id}
-      data-state={context.drag && "group" in context.drag && context.drag.group === entry.group.id ? "moving" : "idle"}
-      onPointerDownCapture={raise}
-      style={{ position: "absolute", left: rect.x, top: rect.y, width: rect.width, height: rect.height, zIndex: 3 + index * 2, display: "flex" }}
-    >
-      <GroupView group={entry.group} place="floating" />
-      <Primitive.div
-        data-dock-float-resize=""
-        aria-hidden
-        onPointerDown={(event) => {
-          if (isPrimaryPointerDown(event)) {
-            context.beginFloatResize(entry.group, event);
-          }
-        }}
-        style={{ position: "absolute", insetInlineEnd: 0, bottom: 0, width: 12, height: 12, touchAction: "none" }}
-      />
-    </Primitive.div>
-  );
-}
-
-function PopoutView({ entry, container }: { entry: DockPopout; container: HTMLElement }): React.ReactNode {
-  return createPortal(<GroupView group={entry.group} place="popout" />, container);
 }
 
 export { Dock, Dock as Root };

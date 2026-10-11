@@ -2,14 +2,26 @@ import type { Point } from "../shared/types";
 import type { DockGroupPlace, DockRect, DockSide, DockTarget } from "./types";
 import { CONTENT_EDGE_SHARE, EDGE_SHARE, SURFACE_EDGE_INSIDE, SURFACE_EDGE_OUTSIDE } from "./constants";
 
+export interface TabGeometry {
+  rect: DockRect;
+  /** The tab's place among its group's panels. */
+  index: number;
+}
+
 export interface GroupGeometry {
   id: string;
   place: DockGroupPlace;
   rect: DockRect;
   tabBar: DockRect;
   content: DockRect;
-  /** The group's tabs in order. */
-  tabs: DockRect[];
+  /** The group's tabs that show in its tab bar, in order; the others wait in its overflow menu. */
+  tabs: TabGeometry[];
+}
+
+/** The strip along an edge of the dock that holds the buttons of the groups hidden there. */
+export interface StripGeometry {
+  side: DockSide;
+  rect: DockRect;
 }
 
 export interface DockGeometry {
@@ -17,8 +29,9 @@ export interface DockGeometry {
   surface: DockRect;
   /** Whether the main surface holds no group. */
   surfaceEmpty: boolean;
-  /** Groups from the topmost: floating groups first, then those of the main surface. */
+  /** Groups from the topmost: floating groups first, then a revealed hidden group, then those of the main surface. */
   groups: GroupGeometry[];
+  strips: StripGeometry[];
   /** The dock's own box; a group that starts floating stays inside it. */
   bounds: DockRect;
   rtl: boolean;
@@ -78,14 +91,14 @@ function tabZone(group: GroupGeometry, point: Point, source: DragSource, rtl: bo
   if (group.id === source.group && source.panel === null) {
     return null;
   }
-  const index = group.tabs.findIndex(tab => (rtl ? point.x > tab.x + tab.width / 2 : point.x < tab.x + tab.width / 2));
-  const before = index === -1 ? undefined : group.tabs[index];
+  const position = group.tabs.findIndex(({ rect }) => (rtl ? point.x > rect.x + rect.width / 2 : point.x < rect.x + rect.width / 2));
+  const before = position === -1 ? undefined : group.tabs[position];
   const last = group.tabs.at(-1);
   const line = before
-    ? (rtl ? before.x + before.width : before.x)
-    : last ? (rtl ? last.x : last.x + last.width) : (rtl ? group.tabBar.x + group.tabBar.width : group.tabBar.x);
+    ? (rtl ? before.rect.x + before.rect.width : before.rect.x)
+    : last ? (rtl ? last.rect.x : last.rect.x + last.rect.width) : (rtl ? group.tabBar.x + group.tabBar.width : group.tabBar.x);
   return {
-    target: { type: "group", group: group.id, index: index === -1 ? group.tabs.length : index },
+    target: { type: "group", group: group.id, index: before ? before.index : last ? last.index + 1 : 0 },
     indicator: { x: line - 1, y: group.tabBar.y, width: 2, height: group.tabBar.height },
   };
 }
@@ -113,8 +126,9 @@ function contentZone(group: GroupGeometry, point: Point, source: DragSource, rtl
 
 /**
  * Where a drop at `point` would put the dragged panel or group, or `null` for nowhere. Floating
- * groups come first since they lie on top, then the tab bars of the main surface, then its edges,
- * which a tab bar along an edge would otherwise hide, then the content of its groups.
+ * groups come first since they lie on top, then a revealed hidden group, the strips along the
+ * edges, the tab bars of the main surface, then its edges, which a tab bar along an edge would
+ * otherwise hide, then the content of its groups.
  */
 export function resolveDropZone(point: Point, geometry: DockGeometry, source: DragSource, floatSize: { width: number; height: number }): DropZone | null {
   const { surface, rtl } = geometry;
@@ -125,6 +139,10 @@ export function resolveDropZone(point: Point, geometry: DockGeometry, source: Dr
       }
       return contains(group.content, point) ? contentZone(group, point, source, rtl) : null;
     }
+  }
+  const strip = geometry.strips.find(entry => contains(entry.rect, point));
+  if (strip) {
+    return { target: { type: "autoHide", side: strip.side }, indicator: strip.rect };
   }
   if (geometry.surfaceEmpty && contains(surface, point)) {
     return { target: { type: "edge", side: "end" }, indicator: surface };

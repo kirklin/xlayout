@@ -1,5 +1,6 @@
 import type {
   DockAction,
+  DockAutoHide,
   DockGroup,
   DockGroupPlace,
   DockLayout,
@@ -11,9 +12,14 @@ import type {
   DockTarget,
   DockTreeInput,
 } from "./types";
-import { EDGE_SHARE, ROOT_NAME, SIZE_EPSILON } from "./constants";
+import { AUTO_HIDE_SIZE, EDGE_SHARE, ROOT_NAME, SIZE_EPSILON } from "./constants";
 
-export const EMPTY_LAYOUT: DockLayout = { root: null, floating: [], popouts: [], maximized: null };
+export const EMPTY_LAYOUT: DockLayout = { root: null, floating: [], popouts: [], maximized: null, autoHide: [] };
+
+/** The groups hidden along the edges; layouts saved before there were any have none. */
+export function autoHiddenOf(layout: DockLayout): DockAutoHide[] {
+  return layout.autoHide ?? [];
+}
 
 type MakeId = (prefix: "group" | "split") => string;
 
@@ -31,9 +37,14 @@ function splitsOf(node: DockNode | null): DockSplit[] {
   return [node, ...node.children.flatMap(splitsOf)];
 }
 
-/** Every group: those of the main surface in order, then the floating ones, then the popouts'. */
+/** Every group: those of the main surface in order, then the floating ones, the hidden ones and the popouts'. */
 export function groupsOf(layout: DockLayout): DockGroup[] {
-  return [...mainGroups(layout.root), ...layout.floating.map(entry => entry.group), ...layout.popouts.map(entry => entry.group)];
+  return [
+    ...mainGroups(layout.root),
+    ...layout.floating.map(entry => entry.group),
+    ...autoHiddenOf(layout).map(entry => entry.group),
+    ...layout.popouts.map(entry => entry.group),
+  ];
 }
 
 export function findGroup(layout: DockLayout, id: string): DockGroup | undefined {
@@ -55,6 +66,9 @@ export function placeOf(layout: DockLayout, groupId: string): DockGroupPlace | u
   if (layout.floating.some(entry => entry.group.id === groupId)) {
     return "floating";
   }
+  if (autoHiddenOf(layout).some(entry => entry.group.id === groupId)) {
+    return "autoHide";
+  }
   return layout.popouts.some(entry => entry.group.id === groupId) ? "popout" : undefined;
 }
 
@@ -75,6 +89,11 @@ function idMaker(layout: DockLayout): MakeId {
     taken.add(id);
     return id;
   };
+}
+
+/** Whether the strip of groups hidden along `side` runs top to bottom. */
+export function runsVertically(side: DockSide): boolean {
+  return side === "start" || side === "end";
 }
 
 function orientationOf(side: DockSide): DockOrientation {
@@ -163,6 +182,9 @@ function insert(layout: DockLayout, panels: string[], active: string, target: Do
       return;
     case "popout":
       layout.popouts.push({ group: createGroup(makeId, panels, active), rect: target.rect, origin });
+      return;
+    case "autoHide":
+      layout.autoHide = [...autoHiddenOf(layout), { group: createGroup(makeId, panels, active), side: target.side, size: target.size ?? AUTO_HIDE_SIZE }];
   }
 }
 
@@ -221,8 +243,12 @@ export function normalizeLayout(layout: DockLayout): DockLayout {
     const group = normalizeGroup(entry.group);
     return group ? [{ ...entry, group }] : [];
   });
+  const autoHide = autoHiddenOf(layout).flatMap((entry) => {
+    const group = normalizeGroup(entry.group);
+    return group ? [{ ...entry, group }] : [];
+  });
   const maximized = layout.maximized !== null && mainGroups(root).some(group => group.id === layout.maximized) ? layout.maximized : null;
-  return { root, floating, popouts, maximized };
+  return { root, floating, popouts, maximized, autoHide };
 }
 
 /** Rejects layouts that place a panel twice, repeat ids, or have a malformed split or group. */
@@ -255,6 +281,11 @@ export function validateLayout(layout: DockLayout): void {
   }
   if (layout.maximized !== null && placeOf(layout, layout.maximized) !== "main") {
     throw new Error(`${ROOT_NAME} layout maximizes "${layout.maximized}", which is not a group of its main surface.`);
+  }
+  for (const entry of autoHiddenOf(layout)) {
+    if (!(entry.size > 0) || !Number.isFinite(entry.size)) {
+      throw new RangeError(`${ROOT_NAME} layout hides group "${entry.group.id}" at a size of ${entry.size}; it needs a size in pixels above 0.`);
+    }
   }
 }
 
@@ -368,6 +399,17 @@ export function dockReducer(layout: DockLayout, action: DockAction): DockLayout 
       next.floating = [...next.floating.filter(floating => floating !== entry), entry];
       break;
     }
+    case "size": {
+      const entry = autoHiddenOf(next).find(hidden => hidden.group.id === action.group);
+      if (!entry) {
+        throw new Error(`${ROOT_NAME} has no group "${action.group}" hidden along an edge.`);
+      }
+      if (!(action.size > 0) || !Number.isFinite(action.size)) {
+        throw new RangeError(`${ROOT_NAME} sizes hidden groups in pixels above 0, not ${action.size}.`);
+      }
+      entry.size = action.size;
+      break;
+    }
   }
   return normalizeLayout(next);
 }
@@ -387,6 +429,11 @@ export function createDockLayout(input: DockLayoutInput): DockLayout {
     floating: (input.floating ?? []).map(entry => ({ group: createGroup(makeId, entry.panels, entry.active ?? entry.panels[0]!), rect: entry.rect })),
     popouts: [],
     maximized: null,
+    autoHide: (input.autoHide ?? []).map(entry => ({
+      group: createGroup(makeId, entry.panels, entry.active ?? entry.panels[0]!),
+      side: entry.side,
+      size: entry.size ?? AUTO_HIDE_SIZE,
+    })),
   });
   validateLayout(layout);
   return layout;

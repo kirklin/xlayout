@@ -128,6 +128,41 @@ describe("dock layout", () => {
   it("leaves out panels that are not known any more", () => {
     expect(shape(pruneLayout(base(), ["explorer", "editor"]).root)).toBe("H[0.25 (explorer*) | 0.75 (editor*)]");
   });
+
+  it("hides groups along the edges, keeps their size, and brings them back", () => {
+    const hidden = dockReducer(base(), { type: "moveGroup", group: "group-3", to: { type: "autoHide", side: "bottom", size: 180 } });
+    expect(shape(hidden.root)).toBe("H[0.25 (explorer* search) | 0.75 (editor preview*)]");
+    expect(hidden.autoHide).toMatchObject([{ side: "bottom", size: 180, group: { panels: ["terminal"], active: "terminal" } }]);
+    const id = hidden.autoHide![0]!.group.id;
+
+    const joined = dockReducer(hidden, { type: "move", panel: "search", to: { type: "group", group: id } });
+    expect(joined.autoHide![0]!.group).toMatchObject({ panels: ["terminal", "search"], active: "search" });
+
+    const resized = dockReducer(joined, { type: "size", group: id, size: 240 });
+    expect(resized.autoHide![0]!.size).toBe(240);
+    expect(() => dockReducer(joined, { type: "size", group: id, size: 0 })).toThrow("above 0");
+    expect(() => dockReducer(joined, { type: "size", group: "group-1", size: 100 })).toThrow("hidden along an edge");
+
+    const back = dockReducer(resized, { type: "moveGroup", group: id, to: { type: "edge", side: "bottom" } });
+    expect(back.autoHide).toEqual([]);
+    expect(shape(back.root)).toBe("V[0.75 H[0.25 (explorer*) | 0.75 (editor preview*)] | 0.25 (terminal search*)]");
+
+    // A hidden group that loses its last panel goes away.
+    const emptied = dockReducer(hidden, { type: "close", panel: "terminal" });
+    expect(emptied.autoHide).toEqual([]);
+  });
+
+  it("builds layouts with hidden groups and accepts layouts saved before there were any", () => {
+    const built = createDockLayout({ root: { panels: ["editor"] }, autoHide: [{ panels: ["terminal", "problems"], side: "end" }] });
+    expect(built.autoHide).toMatchObject([{ side: "end", size: 280, group: { panels: ["terminal", "problems"], active: "terminal" } }]);
+    const saved = { root: built.root, floating: [], popouts: [], maximized: null } satisfies DockLayout;
+    expect(() => validateLayout(saved)).not.toThrow();
+    expect(normalizeLayout(saved).autoHide).toEqual([]);
+    expect(dockReducer(saved, { type: "move", panel: "editor", to: { type: "autoHide", side: "start" } }).autoHide).toMatchObject([{ side: "start", size: 280 }]);
+    const tiny = { ...built, autoHide: [{ ...built.autoHide![0]!, size: -4 }] };
+    expect(() => validateLayout(tiny)).toThrow("size in pixels above 0");
+    expect(pruneLayout(built, ["editor"]).autoHide).toEqual([]);
+  });
 });
 
 function findGroupOf(layout: DockLayout, panel: string): string {

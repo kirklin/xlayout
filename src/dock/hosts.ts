@@ -6,6 +6,16 @@ export function elementId(prefix: string, value: string): string {
   return `${prefix}-${value.replace(/[^\w-]/g, character => `_${character.codePointAt(0)!.toString(16)}_`)}`;
 }
 
+/** The id of the element a revealed hidden group shows in. */
+export function flyoutId(dockId: string, group: string): string {
+  return elementId(`${dockId}-flyout`, group);
+}
+
+/** The id of the button of a panel hidden along an edge. */
+export function stripTabId(dockId: string, panel: string): string {
+  return elementId(`${dockId}-strip`, panel);
+}
+
 /** Copies the document's look into a popout window: attributes of the root element and every style sheet. */
 function mirrorDocument(source: Document, target: Document): void {
   for (const attribute of source.documentElement.attributes) {

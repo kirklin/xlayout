@@ -1,5 +1,5 @@
 import type * as React from "react";
-import type { DockAction, DockFloating, DockGroup, DockGroupPlace, DockLayout, DockRect, DockSplit, DockTarget } from "./types";
+import type { DockAction, DockAutoHide, DockFloating, DockGroup, DockGroupPlace, DockLayout, DockRect, DockSide, DockSplit, DockTarget } from "./types";
 import type { DropZone } from "./zones";
 import { createRequiredContext } from "../shared/context";
 import { ROOT_NAME } from "./constants";
@@ -33,8 +33,17 @@ export interface DockApi {
   float: (panel: string) => void;
   /** Opens a group in a window of its own; call it from a click, which browsers require for new windows. */
   popout: (group: string) => void;
-  /** Brings a floating or popout group back to the main surface. */
+  /** Brings a floating, popout or hidden group back to the main surface. */
   dock: (group: string) => void;
+  /**
+   * Hides a group along an edge of the dock, keeping its size; without `side`, along the edge
+   * nearest to it.
+   */
+  autoHide: (group: string, side?: DockSide) => void;
+  /** The group hidden along an edge that is revealed over the main surface, if any. */
+  revealed: string | null;
+  /** Reveals a group hidden along an edge, or with `null` hides it again. */
+  reveal: (group: string | null) => void;
 }
 
 export interface DockTabRenderProps {
@@ -43,6 +52,21 @@ export interface DockTabRenderProps {
   active: boolean;
   closable: boolean;
   close: () => void;
+}
+
+export interface DockStripTabRenderProps {
+  panel: string;
+  title: string;
+  side: DockSide;
+  /** Whether the panel shows in its revealed group. */
+  revealed: boolean;
+}
+
+export interface DockTabOverflowRenderProps {
+  /** The panels whose tabs do not fit, in order. */
+  panels: readonly string[];
+  /** Whether the menu listing them is open. */
+  open: boolean;
 }
 
 export interface DockGroupRenderProps {
@@ -80,7 +104,13 @@ export interface SplitResize {
   sizes: number[];
 }
 
-export type DragState = PanelDrag | GroupDrag | FloatResize | SplitResize;
+export interface FlyoutResize {
+  kind: "flyout";
+  group: string;
+  size: number;
+}
+
+export type DragState = PanelDrag | GroupDrag | FloatResize | SplitResize | FlyoutResize;
 
 export interface GroupElements {
   group: HTMLElement;
@@ -96,21 +126,34 @@ export interface DockContextValue {
   drag: DragState | null;
   /** The panel being docked with the keyboard. */
   docking: string | null;
+  /** The panel whose tab takes focus once it shows. */
+  focusRef: React.RefObject<string | null>;
   handleLabel: string;
+  stripLabel: string;
+  tabOverflowLabel: string;
+  touchMargin: number;
   renderTab: (tab: DockTabRenderProps) => React.ReactNode;
+  renderStripTab: (tab: DockStripTabRenderProps) => React.ReactNode;
+  renderTabOverflow: (overflow: DockTabOverflowRenderProps) => React.ReactNode;
   renderGroupControls: ((group: DockGroupRenderProps) => React.ReactNode) | undefined;
   registerGroup: (group: string, elements: GroupElements | null) => void;
+  registerStrip: (side: DockSide, element: HTMLElement | null) => void;
   splitSizes: (split: DockSplit) => number[];
   floatingRect: (entry: DockFloating) => DockRect;
-  beginTabDrag: (group: DockGroup, panel: string, event: React.PointerEvent<HTMLElement>) => void;
-  beginGroupDrag: (group: DockGroup, event: React.PointerEvent<HTMLElement>) => void;
-  beginFloatResize: (group: DockGroup, event: React.PointerEvent<HTMLElement>) => void;
-  beginSplitResize: (split: DockSplit, index: number, event: React.PointerEvent<HTMLElement>) => void;
+  flyoutSize: (entry: DockAutoHide) => number;
+  beginTabDrag: (group: DockGroup, panel: string, event: PointerEvent, element: HTMLElement) => void;
+  beginGroupDrag: (group: DockGroup, event: PointerEvent, element: HTMLElement) => void;
+  beginFloatResize: (group: DockGroup, event: PointerEvent, element: HTMLElement) => void;
+  beginSplitResize: (split: DockSplit, index: number, event: PointerEvent, element: HTMLElement) => void;
+  beginFlyoutResize: (entry: DockAutoHide, event: PointerEvent, element: HTMLElement) => void;
   handleTabKey: (group: DockGroup, panel: string, event: React.KeyboardEvent<HTMLElement>) => void;
   handleTabBlur: (panel: string) => void;
   /** Whether a click on a tab only ends a drag that started on it. */
   consumeDragClick: (panel: string) => boolean;
   handleSplitKey: (split: DockSplit, index: number, event: React.KeyboardEvent<HTMLElement>) => void;
+  handleFlyoutKey: (entry: DockAutoHide, event: React.KeyboardEvent<HTMLElement>) => void;
+  /** Reveals the group of a strip button with its panel selected, or hides it when it shows that panel already. */
+  toggleStripTab: (group: DockGroup, panel: string, moveFocus: boolean) => void;
 }
 
 export const [DockContext, useDockContext] = createRequiredContext<DockContextValue>(ROOT_NAME);

@@ -49,6 +49,17 @@ export interface DockPopout {
   origin: string | null;
 }
 
+/**
+ * A group hidden along an edge of the dock: its panels show as buttons on that edge, and the
+ * group slides out over the main surface while revealed.
+ */
+export interface DockAutoHide {
+  group: DockGroup;
+  side: DockSide;
+  /** The group's size in pixels while revealed: its width along the start and end edges, its height along the top and bottom. */
+  size: number;
+}
+
 export interface DockLayout {
   /** The main surface; `null` when no panel is docked there. */
   root: DockNode | null;
@@ -56,10 +67,12 @@ export interface DockLayout {
   popouts: DockPopout[];
   /** A group of the main surface shown alone over all of it. */
   maximized: string | null;
+  /** Groups hidden along the edges, in order along each edge. Layouts saved without it have none. */
+  autoHide?: DockAutoHide[];
 }
 
 /** Where a group lives. */
-export type DockGroupPlace = "main" | "floating" | "popout";
+export type DockGroupPlace = "main" | "floating" | "popout" | "autoHide";
 
 export interface DockGroupInput {
   panels: string[];
@@ -79,9 +92,16 @@ export interface DockFloatingInput extends DockGroupInput {
   rect: DockRect;
 }
 
+export interface DockAutoHideInput extends DockGroupInput {
+  side: DockSide;
+  /** @default 280 */
+  size?: number;
+}
+
 export interface DockLayoutInput {
   root?: DockTreeInput | null;
   floating?: DockFloatingInput[];
+  autoHide?: DockAutoHideInput[];
 }
 
 /** Among the tabs of a group, before the tab at `index`, or last. */
@@ -116,8 +136,16 @@ export interface DockPopoutTarget {
   rect: DockRect;
 }
 
+/** Into a new group hidden along an edge of the dock. */
+export interface DockAutoHideTarget {
+  type: "autoHide";
+  side: DockSide;
+  /** The group's size in pixels while revealed. @default 280 */
+  size?: number;
+}
+
 /** Where a moved panel or group goes. */
-export type DockTarget = DockGroupTarget | DockSplitTarget | DockEdgeTarget | DockFloatTarget | DockPopoutTarget;
+export type DockTarget = DockGroupTarget | DockSplitTarget | DockEdgeTarget | DockFloatTarget | DockPopoutTarget | DockAutoHideTarget;
 
 export interface DockActivateAction {
   type: "activate";
@@ -178,4 +206,11 @@ export interface DockRaiseAction {
   group: string;
 }
 
-export type DockAction = DockActivateAction | DockCloseAction | DockAddAction | DockMoveAction | DockMoveGroupAction | DockResizeAction | DockMaximizeAction | DockPlaceAction | DockReturnAction | DockRaiseAction;
+/** Sets the size in pixels of a group hidden along an edge, for when it is revealed. */
+export interface DockSizeAction {
+  type: "size";
+  group: string;
+  size: number;
+}
+
+export type DockAction = DockActivateAction | DockCloseAction | DockAddAction | DockMoveAction | DockMoveGroupAction | DockResizeAction | DockMaximizeAction | DockPlaceAction | DockReturnAction | DockRaiseAction | DockSizeAction;

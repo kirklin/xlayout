@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { commands, server } from "vitest/browser";
 import { centerOf, nextFrames, touchDrag } from "../test/pointer";
 import { getById, getByTestId, renderStrict, widthOf } from "../test/render";
+import * as Dock from "./dock";
 import * as Grid from "./grid";
 import * as Shell from "./shell";
 import * as Splitter from "./splitter";
@@ -156,6 +157,73 @@ describe.runIf(server.browser === "chromium")("touch", () => {
       await renderStrict(<Drawer swipeEdge={20} />);
       await touchDrag({ x: 4, y: 300 }, 250, 0, { steps: 12 });
       await vi.waitFor(() => expect(getByTestId("drawer").dataset.state).toBe("expanded"));
+    });
+  });
+
+  describe("dock", () => {
+    // Without close buttons, which the browser's touch adjustment would move touches onto.
+    const PANELS = {
+      files: { title: "Files", content: "Files", closable: false },
+      search: { title: "Search", content: "Search", closable: false },
+      editor: { title: "Editor", content: "Editor", closable: false },
+      terminal: { title: "Terminal", content: "Terminal", closable: false },
+    };
+    const LAYOUT = Dock.createDockLayout({
+      root: { orientation: "horizontal", sizes: [0.4, 0.6], children: [{ panels: ["files", "search"] }, { panels: ["editor"] }] },
+      autoHide: [{ panels: ["terminal"], side: "bottom", size: 120 }],
+    });
+
+    function Page({ onLayoutChange }: { onLayoutChange?: (layout: Dock.DockLayout) => void }): React.ReactNode {
+      return (
+        <div data-testid="page" style={{ width: 900, height: 500, overflow: "auto" }}>
+          <Dock.Root panels={PANELS} defaultLayout={LAYOUT} onLayoutChange={onLayoutChange} style={{ width: 800, height: 400 }} />
+          <div style={{ height: 1200 }}>Below</div>
+        </div>
+      );
+    }
+
+    const tab = (panel: string): HTMLElement => document.querySelector<HTMLElement>(`[role=tab][data-panel="${panel}"]`)!;
+
+    it("drags a tab across at once and leaves swipes up and down to scrolling", async () => {
+      const onLayoutChange = vi.fn();
+      await renderStrict(<Page onLayoutChange={onLayoutChange} />);
+      const bar = document.querySelectorAll<HTMLElement>("[role=tablist]")[1]!.getBoundingClientRect();
+      const from = centerOf(tab("search"));
+      await touchDrag(from, bar.right - 20 - from.x, 0, { steps: 16 });
+      await nextFrames();
+      expect(onLayoutChange.mock.lastCall![0].root.children[1].panels).toEqual(["editor", "search"]);
+
+      const page = getByTestId("page");
+      await touchDrag(centerOf(tab("files")), 0, -150, { steps: 16 });
+      await nextFrames(4);
+      expect(page.scrollTop).toBeGreaterThan(50);
+      expect(onLayoutChange).toHaveBeenCalledTimes(1);
+    });
+
+    it("drags a held tab in any direction without scrolling", async () => {
+      const onLayoutChange = vi.fn();
+      await renderStrict(<Page onLayoutChange={onLayoutChange} />);
+      const content = document.querySelectorAll<HTMLElement>("[data-dock-content]")[1]!.getBoundingClientRect();
+      const from = centerOf(tab("files"));
+      await touchDrag(from, content.left + content.width / 2 - from.x, content.bottom - 20 - from.y, { hold: 600, steps: 16 });
+      await nextFrames();
+      expect(getByTestId("page").scrollTop).toBe(0);
+      const root = onLayoutChange.mock.lastCall![0].root;
+      expect(root.children[1]).toMatchObject({ type: "split", orientation: "vertical" });
+    });
+
+    it("takes touches beside its separators and opens hidden panels with a tap", async () => {
+      await renderStrict(<Page />);
+      const separator = document.querySelector<HTMLElement>("[data-dock-handle]")!;
+      const before = widthOf(document.querySelectorAll("[data-dock-group]")[0]!);
+      const rect = separator.getBoundingClientRect();
+      await touchDrag({ x: rect.right + 11, y: rect.top + 200 }, 80, 0);
+      await nextFrames();
+      expect(widthOf(document.querySelectorAll("[data-dock-group]")[0]!)).toBeCloseTo(before + 80, 0);
+
+      const strip = document.querySelector<HTMLElement>("[data-dock-strip-tab]")!;
+      await commands.touch([{ type: "start", ...centerOf(strip) }, { type: "end" }]);
+      await vi.waitFor(() => expect(document.querySelector("[data-dock-flyout]")).not.toBeNull());
     });
   });
 

@@ -11,7 +11,7 @@ function geometry(rtl = false): DockGeometry {
     rect: { x, y: 0, width: 500, height: 600 },
     tabBar: { x, y: 0, width: 500, height: 30 },
     content: { x, y: 30, width: 500, height: 570 },
-    tabs: [{ x, y: 0, width: 100, height: 30 }, { x: x + 100, y: 0, width: 100, height: 30 }],
+    tabs: [{ rect: { x, y: 0, width: 100, height: 30 }, index: 0 }, { rect: { x: x + 100, y: 0, width: 100, height: 30 }, index: 1 }],
   });
   return {
     surface: { x: 0, y: 0, width: 1000, height: 600 },
@@ -23,11 +23,12 @@ function geometry(rtl = false): DockGeometry {
         rect: { x: 300, y: 200, width: 200, height: 150 },
         tabBar: { x: 300, y: 200, width: 200, height: 30 },
         content: { x: 300, y: 230, width: 200, height: 120 },
-        tabs: [{ x: 300, y: 200, width: 80, height: 30 }],
+        tabs: [{ rect: { x: 300, y: 200, width: 80, height: 30 }, index: 0 }],
       },
       main("a", 0),
       main("b", 500),
     ],
+    strips: [],
     bounds: { x: 0, y: 0, width: 1000, height: 800 },
     rtl,
   };
@@ -84,6 +85,25 @@ describe("drop zones", () => {
     expect(resolveDropZone({ x: 500, y: 750 }, geometry(), FROM_B, FLOAT)).toEqual({
       target: { type: "float", rect: { x: 320, y: 540, width: 360, height: 260 } },
       indicator: { x: 320, y: 540, width: 360, height: 260 },
+    });
+  });
+
+  it("inserts by the panels' places when some tabs wait in the overflow menu", () => {
+    const crowded = geometry();
+    // Group a holds four panels; the second and third do not fit, so its tabs show the first and the last.
+    crowded.groups[1] = {
+      ...crowded.groups[1]!,
+      tabs: [{ rect: { x: 0, y: 0, width: 100, height: 30 }, index: 0 }, { rect: { x: 100, y: 0, width: 100, height: 30 }, index: 3 }],
+    };
+    expect(resolveDropZone({ x: 140, y: 15 }, crowded, FROM_B, FLOAT)?.target).toEqual({ type: "group", group: "a", index: 3 });
+    expect(resolveDropZone({ x: 400, y: 15 }, crowded, FROM_B, FLOAT)?.target).toEqual({ type: "group", group: "a", index: 4 });
+  });
+
+  it("hides along an edge when dropped on its strip", () => {
+    const withStrip: DockGeometry = { ...geometry(), strips: [{ side: "start", rect: { x: -24, y: 0, width: 24, height: 600 } }] };
+    expect(resolveDropZone({ x: -10, y: 300 }, withStrip, FROM_B, FLOAT)).toEqual({
+      target: { type: "autoHide", side: "start" },
+      indicator: { x: -24, y: 0, width: 24, height: 600 },
     });
   });
 
