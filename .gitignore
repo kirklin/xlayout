@@ -1,0 +1,48 @@
+# Dependencies
+node_modules
+
+# Build output
+dist
+*.tgz
+*.tsbuildinfo
+
+# Tests
+coverage
+__screenshots__
+test-results
+.vitest
+
+# Logs and caches
+*.log
+.eslintcache
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Signing material
+*.pem
+*.p12
+*.cer
+*.jks
+*.keystore
+keystore.properties
+
+# Editors
+.idea
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.code-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local drafts
+BRIEF.md
+NOTES.md
+TODO.md
+*.draft.md
+notes/

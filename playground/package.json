@@ -1,0 +1,24 @@
+{
+  "name": "xlayout-playground",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource-variable/geist": "catalog:playground",
+    "lucide-react": "catalog:playground",
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "catalog:playground",
+    "@types/react": "catalog:types",
+    "@types/react-dom": "catalog:types",
+    "@vitejs/plugin-react": "catalog:playground",
+    "tailwindcss": "catalog:playground",
+    "vite": "catalog:playground"
+  }
+}

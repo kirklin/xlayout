@@ -1,0 +1,105 @@
+{
+  "name": "xlayout",
+  "type": "module",
+  "version": "0.0.0",
+  "packageManager": "pnpm@12.11.2",
+  "description": "Headless, accessible layout primitives for React",
+  "author": "Kirk Lin <https://github.com/kirklin>",
+  "license": "MIT",
+  "funding": "https://www.buymeacoffee.com/linkirk",
+  "homepage": "https://github.com/kirklin/xlayout#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kirklin/xlayout.git"
+  },
+  "bugs": "https://github.com/kirklin/xlayout/issues",
+  "keywords": [
+    "react",
+    "headless",
+    "layout",
+    "accessibility",
+    "app-shell",
+    "sidebar",
+    "splitter",
+    "resizable",
+    "dashboard",
+    "grid-layout",
+    "dock",
+    "masonry",
+    "overflow",
+    "sticky",
+    "scrollspy"
+  ],
+  "sideEffects": false,
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "*": [
+        "./dist/*.d.ts"
+      ]
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown --watch",
+    "play": "pnpm -C playground dev",
+    "lint": "eslint",
+    "lint:fix": "eslint --fix",
+    "prepack": "pnpm build",
+    "release": "bumpp",
+    "test": "vitest",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p playground",
+    "typecheck:ts6": "tsc6 --noEmit && tsc6 --noEmit -p playground",
+    "prepare": "simple-git-hooks",
+    "up": "taze latest -r -w -I"
+  },
+  "peerDependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "dependencies": {
+    "@radix-ui/react-direction": "catalog:prod",
+    "@radix-ui/react-slot": "catalog:prod"
+  },
+  "devDependencies": {
+    "@antfu/ni": "catalog:cli",
+    "@arethetypeswrong/core": "catalog:cli",
+    "@eslint-react/eslint-plugin": "catalog:cli",
+    "@kirklin/eslint-config": "catalog:cli",
+    "@types/node": "catalog:types",
+    "@types/react": "catalog:types",
+    "@types/react-dom": "catalog:types",
+    "@typescript/native": "catalog:cli",
+    "@vitest/browser-playwright": "catalog:testing",
+    "bumpp": "catalog:cli",
+    "eslint": "catalog:cli",
+    "eslint-plugin-erasable-syntax-only": "catalog:cli",
+    "eslint-plugin-format": "catalog:cli",
+    "eslint-plugin-react-hooks": "catalog:cli",
+    "eslint-plugin-react-refresh": "catalog:cli",
+    "lint-staged": "catalog:cli",
+    "playwright": "catalog:testing",
+    "publint": "catalog:cli",
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend",
+    "simple-git-hooks": "catalog:cli",
+    "taze": "catalog:cli",
+    "tsdown": "catalog:cli",
+    "typescript": "catalog:cli",
+    "vitest": "catalog:testing",
+    "vitest-browser-react": "catalog:testing"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "pnpm i --frozen-lockfile --ignore-scripts --offline && pnpm lint-staged"
+  },
+  "lint-staged": {
+    "*": "eslint --fix"
+  }
+}
