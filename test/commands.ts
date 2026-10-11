@@ -7,6 +7,11 @@ import type { PointerAction, TouchAction } from "./types.ts";
 const touchSessions = new WeakMap<Page, Promise<CDPSession>>();
 /** Where the finger of the touch going on in each page is, in page coordinates. */
 const lastTouch = new WeakMap<Page, [number, number]>();
+/** When the finger of each page last went down, moved or lifted, in milliseconds since the epoch. */
+const lastTouchTime = new WeakMap<Page, number>();
+
+/** Milliseconds between the events of a moving finger: touch screens report it every frame. */
+const TOUCH_INTERVAL = 16;
 
 function touchSessionOf(page: Page): Promise<CDPSession> {
   let session = touchSessions.get(page);
@@ -81,13 +86,25 @@ export const touch: BrowserCommand<[actions: TouchAction[]]> = async (context, a
   }
   const toPage = await pageCoordinates(context);
   const session = await touchSessionOf(page);
+  // Every event carries the time the finger got there, a frame after its last event, so how fast
+  // the finger moves does not depend on how long the browser takes over each event. The finger
+  // rests between commands, so the first event of one comes now at the earliest.
+  let time = Math.max(Date.now(), (lastTouchTime.get(page) ?? 0) + TOUCH_INTERVAL);
   const send = async (type: "touchStart" | "touchMove" | "touchEnd", point: [number, number] | null): Promise<void> => {
+    // An event never comes before the time it carries.
+    const early = time - Date.now();
+    if (early > 0) {
+      await page.waitForTimeout(early);
+    }
     await session.send("Input.dispatchTouchEvent", {
       type,
       // A small contact area keeps the browser's touch adjustment from moving the touch onto a
       // nearby target, so tests see where the library takes a touch.
       touchPoints: point ? [{ x: point[0], y: point[1], id: 1, radiusX: 1, radiusY: 1, force: 1 }] : [],
+      timestamp: time / 1000,
     });
+    lastTouchTime.set(page, time);
+    time += TOUCH_INTERVAL;
   };
   for (const action of actions) {
     switch (action.type) {
@@ -117,6 +134,7 @@ export const touch: BrowserCommand<[actions: TouchAction[]]> = async (context, a
       }
       case "wait": {
         await page.waitForTimeout(action.ms);
+        time += action.ms;
         break;
       }
       default: {
